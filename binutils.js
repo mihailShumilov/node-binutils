@@ -195,10 +195,11 @@ BinaryWriter.prototype = {
 
     WriteUInt64: function(p_Value) {
         var s_TempBuffer = new Buffer(8);
+        var s_Value = BigInt(p_Value);
         if (this.Endianness == 'little') {
-            s_TempBuffer.writeUInt32LE(p_Value, 0);
+            s_TempBuffer.writeBigUInt64LE(s_Value, 0);
         } else {
-            s_TempBuffer.writeUInt32BE(p_Value, 0);
+            s_TempBuffer.writeBigUInt64BE(s_Value, 0);
         }
         this.Length += 8;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
@@ -235,10 +236,11 @@ BinaryWriter.prototype = {
 
     WriteInt64: function(p_Value) {
         var s_TempBuffer = new Buffer(8);
+        var s_Value = BigInt(p_Value);
         if (this.Endianness == 'little') {
-            s_TempBuffer.writeInt32LE(p_Value, 0);
+            s_TempBuffer.writeBigInt64LE(s_Value, 0);
         } else {
-            s_TempBuffer.writeInt32BE(p_Value, 0);
+            s_TempBuffer.writeBigInt64BE(s_Value, 0);
         }
         this.Length += 8;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
@@ -279,7 +281,7 @@ BinaryWriter.prototype = {
             p_Value = s_BytesArray;
         }
 
-        if (!p_Value instanceof Buffer && !p_Value instanceof Array) {
+        if (!(p_Value instanceof Buffer) && !(p_Value instanceof Array)) {
             throw new Error("Invalid Buffer object provided.");
         }
 
