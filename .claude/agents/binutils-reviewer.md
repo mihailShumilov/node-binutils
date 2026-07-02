@@ -42,10 +42,11 @@ in doubt, actually run it: `node -e "..."` or `node --test`.
 
 - ES5 only: `var`, prototype assignment. No `let`/`const`/classes/arrow functions.
 - `PascalCase` method and property names; parameters prefixed `p_`; locals `s_`.
-- `new Buffer(...)` is intentional for `node >=0.12`. Do NOT recommend
-  `Buffer.alloc`/`Buffer.from` unless the change also raises `engines.node`.
+- Buffers are created with `Buffer.alloc`/`Buffer.from` (the package targets
+  `node >=12`). Flag any reintroduction of the deprecated `new Buffer(...)`.
 - New/changed public methods must have matching `README.md` entries with the
-  existing phrasing, and a round-trip test.
+  existing phrasing, updated typings in `binutils.d.ts`, a `CHANGELOG.md` entry
+  under `Unreleased`, and a round-trip test.
 - Methods placed beside their family in the file, ordered consistently.
 
 ## Output format

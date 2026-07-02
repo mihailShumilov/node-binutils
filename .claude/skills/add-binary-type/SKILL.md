@@ -18,8 +18,9 @@ previously shipped a low-32-bit width bug in the 64-bit writers — don't repeat
 - Method names are `PascalCase`: `ReadUInt24`, `WriteBool`, etc.
 - Parameters are prefixed `p_` (`p_Value`); locals are prefixed `s_` (`s_Val`,
   `s_TempBuffer`).
-- Keep `new Buffer(...)` — the package targets `node >=0.12`. Do not switch to
-  `Buffer.alloc`/`Buffer.from` unless `package.json` `engines.node` is also raised.
+- Create buffers with `Buffer.alloc(N)` (new zero-filled) and `Buffer.from(...)`
+  (conversions) — the package targets `node >=12`; do not reintroduce the
+  deprecated `new Buffer(...)` constructor.
 - **The write width MUST equal the read width.** When the type is wider than 32
   bits, use the correct wide Buffer method (`writeBigUInt64LE`, etc.), NOT
   `writeUInt32LE` — using a 32-bit write into an 8-byte buffer was the original
@@ -55,7 +56,7 @@ endianness, grow `this.Length` by `N`, and concat.
 
 ```javascript
 WriteTYPE: function(p_Value) {
-    var s_TempBuffer = new Buffer(N);
+    var s_TempBuffer = Buffer.alloc(N);
     if (this.Endianness == 'little') {
         s_TempBuffer.writeTYPELE(p_Value, 0);
     } else {
@@ -79,11 +80,14 @@ bytes). Add the new method next to its siblings, not at the end.
 1. **README.md** — add a `### ReadX(...)` and `### WriteX(value)` entry in the
    matching BinaryReader / BinaryWriter sections, mirroring the existing phrasing
    ("Reads/Writes a … and advances the current position by N bytes").
-2. **Test** — add a round-trip test (see the `test-binutils` skill): write a value
+2. **binutils.d.ts** — add the method signatures to the matching class, mirroring
+   the existing doc comments.
+3. **CHANGELOG.md** — add an entry under `Unreleased`.
+4. **Test** — add a round-trip test (see the `test-binutils` skill): write a value
    in both `'big'` and `'little'`, read it back, assert equality. Include a min/max
    or negative boundary value for signed/wide types. For 64-bit values assert the
    returned type is `bigint`.
-3. Run the tests: `node --test`.
+5. Run the tests: `node --test`.
 
 ## Verify before finishing
 

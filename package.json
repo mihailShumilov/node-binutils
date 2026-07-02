@@ -3,15 +3,52 @@
     "version": "0.1.4",
     "author": "Mihail Shumilov <mschumilow@gmail.com>",
     "description": "A .NET-like BinaryReader and BinaryWriter with endianness support.",
+    "license": "MIT",
+    "keywords": [
+        "binary",
+        "buffer",
+        "binaryreader",
+        "binarywriter",
+        "reader",
+        "writer",
+        "endianness",
+        "endian",
+        "bigint",
+        "int64",
+        "uint64",
+        "parse",
+        "serialize"
+    ],
     "main": "./binutils.js",
+    "types": "./binutils.d.ts",
+    "exports": {
+        ".": {
+            "types": "./binutils.d.ts",
+            "default": "./binutils.js"
+        }
+    },
+    "files": [
+        "binutils.js",
+        "binutils.d.ts",
+        "CHANGELOG.md"
+    ],
     "scripts": {
-        "test": "node --test"
+        "test": "node --test",
+        "lint": "eslint ."
     },
     "engines": {
-        "node": ">=0.12"
+        "node": ">=12"
     },
     "repository": {
-        "type" : "git",
-        "url" : "git://github.com/mihailShumilov/node-binutils.git"
+        "type": "git",
+        "url": "git+https://github.com/mihailShumilov/node-binutils.git"
+    },
+    "bugs": {
+        "url": "https://github.com/mihailShumilov/node-binutils/issues"
+    },
+    "homepage": "https://github.com/mihailShumilov/node-binutils#readme",
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "eslint": "^10.6.0"
     }
 }

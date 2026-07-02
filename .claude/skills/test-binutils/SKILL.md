@@ -5,10 +5,10 @@ description: Author and run tests for the binutils64 library using node:test and
 
 # Testing binutils64
 
-The library ships with no test framework today. Use the built-in `node:test`
-runner + `node:assert/strict` — zero dependencies. (The library's runtime floor
-stays `node >=0.12`; `node:test` only affects the dev/test environment, which
-needs Node >= 18.)
+Tests live in `test/` and use the built-in `node:test` runner +
+`node:assert/strict` — zero dependencies. (The library's runtime floor is
+`node >=12`; `node:test` only affects the dev/test environment, which needs
+Node >= 18.)
 
 ## Layout & running
 

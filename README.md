@@ -3,7 +3,12 @@
 > A .NET-style `BinaryReader` and `BinaryWriter` for Node.js, with selectable endianness.
 
 [![npm version](https://img.shields.io/npm/v/binutils64.svg)](https://www.npmjs.com/package/binutils64)
+[![npm downloads](https://img.shields.io/npm/dm/binutils64.svg)](https://www.npmjs.com/package/binutils64)
 [![Tests](https://github.com/mihailShumilov/node-binutils/actions/workflows/test.yml/badge.svg)](https://github.com/mihailShumilov/node-binutils/actions/workflows/test.yml)
+[![node version](https://img.shields.io/node/v/binutils64.svg)](https://www.npmjs.com/package/binutils64)
+[![license](https://img.shields.io/github/license/mihailShumilov/node-binutils.svg)](https://github.com/mihailShumilov/node-binutils/blob/master/LICENSE)
+[![types](https://img.shields.io/npm/types/binutils64.svg)](https://www.npmjs.com/package/binutils64)
+[![install size](https://packagephobia.com/badge?p=binutils64)](https://packagephobia.com/result?p=binutils64)
 
 `binutils64` provides two small classes — `BinaryReader` and `BinaryWriter` — that
 make it easy to parse and produce binary data sequentially, with an API modelled on
@@ -24,6 +29,7 @@ doubles, and raw byte runs.
 - [Requirements and compatibility](#requirements-and-compatibility)
 - [Testing](#testing)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
@@ -32,6 +38,7 @@ doubles, and raw byte runs.
 - 64-bit integers via JavaScript `BigInt`.
 - Signed and unsigned integers, IEEE-754 `float` and `double`, and raw byte runs.
 - Zero runtime dependencies.
+- Bundled TypeScript type definitions.
 
 ## Installation
 
@@ -232,11 +239,11 @@ console.log(record, 'read', reader.Position, 'of', reader.Length, 'bytes');
 
 ## Requirements and compatibility
 
-- **Node.js.** The 8-, 16- and 32-bit methods run on very old Node.js versions, but
-  the 64-bit methods (`ReadUInt64`, `ReadInt64`, `WriteUInt64`, `WriteInt64`) rely on
-  `BigInt` and the `Buffer` big-integer methods, which require **Node.js 12 or newer**.
-- The library uses the legacy `Buffer` constructor internally; on modern Node.js you
-  may see a one-time `DEP0005` deprecation warning. This does not affect behavior.
+- **Node.js 12 or newer** (declared in `package.json` `engines`). The 64-bit methods
+  (`ReadUInt64`, `ReadInt64`, `WriteUInt64`, `WriteInt64`) rely on `BigInt` and the
+  `Buffer` big-integer methods introduced in Node.js 12.
+- **TypeScript typings are bundled** (`binutils.d.ts`) — no separate `@types`
+  package is needed.
 - Running the test suite uses the built-in `node:test` runner, which requires
   **Node.js 18 or newer**.
 
@@ -253,4 +260,10 @@ the documented examples. Continuous integration runs it on Node.js 20, 22 and 24
 ## Contributing
 
 Issues and pull requests are welcome. Please add or update tests for any behavioral
-change and make sure `npm test` passes before opening a pull request.
+change, note it in `CHANGELOG.md` under *Unreleased*, and make sure `npm test` and
+`npm run lint` pass before opening a pull request (run `npm ci` once to install the
+linter).
+
+## License
+
+[MIT](LICENSE)

@@ -1,9 +1,9 @@
 var BinaryReader = function(p_InputBuffer, p_Endianness, p_Encoding) {
     // Instantiate the buffer (if needed)
     if (p_InputBuffer instanceof Buffer) {
-        this.ByteBuffer = new Buffer(p_InputBuffer);
+        this.ByteBuffer = Buffer.from(p_InputBuffer);
     } else if (p_InputBuffer instanceof Array || typeof p_InputBuffer == 'string') {
-        this.ByteBuffer = new Buffer(p_InputBuffer, p_Encoding);
+        this.ByteBuffer = Buffer.from(p_InputBuffer, p_Encoding);
     } else {
         throw new Error('Invalid buffer input for BinaryReader (' + typeof p_InputBuffer + ')');
     }
@@ -134,10 +134,10 @@ BinaryReader.prototype = {
 
     ReadBytes: function(p_Count) {
         if (p_Count > this.ByteBuffer.length) {
-            return new Buffer(0);
+            return Buffer.alloc(0);
         }
 
-        var s_Val = new Buffer(p_Count);
+        var s_Val = Buffer.alloc(p_Count);
         this.ByteBuffer.copy(s_Val, 0, 0, p_Count);
 
         this.ByteBuffer = this.ByteBuffer.slice(p_Count);
@@ -151,7 +151,7 @@ BinaryReader.prototype = {
 
 var BinaryWriter = function(p_Endianness, p_Encoding) {
     // Instantiate the buffer
-    this.ByteBuffer = new Buffer(0);
+    this.ByteBuffer = Buffer.alloc(0);
 
     // Set the endianness
     this.Endianness = p_Endianness || 'big';
@@ -165,14 +165,14 @@ var BinaryWriter = function(p_Endianness, p_Encoding) {
 
 BinaryWriter.prototype = {
     WriteUInt8: function(p_Value) {
-        var s_TempBuffer = new Buffer(1);
+        var s_TempBuffer = Buffer.alloc(1);
         s_TempBuffer.writeUInt8(p_Value, 0);
         this.Length += 1;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
     },
 
     WriteUInt16: function(p_Value) {
-        var s_TempBuffer = new Buffer(2);
+        var s_TempBuffer = Buffer.alloc(2);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeUInt16LE(p_Value, 0);
         } else {
@@ -183,7 +183,7 @@ BinaryWriter.prototype = {
     },
 
     WriteUInt32: function(p_Value) {
-        var s_TempBuffer = new Buffer(4);
+        var s_TempBuffer = Buffer.alloc(4);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeUInt32LE(p_Value, 0);
         } else {
@@ -194,7 +194,7 @@ BinaryWriter.prototype = {
     },
 
     WriteUInt64: function(p_Value) {
-        var s_TempBuffer = new Buffer(8);
+        var s_TempBuffer = Buffer.alloc(8);
         var s_Value = BigInt(p_Value);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeBigUInt64LE(s_Value, 0);
@@ -206,14 +206,14 @@ BinaryWriter.prototype = {
     },
 
     WriteInt8: function(p_Value) {
-        var s_TempBuffer = new Buffer(1);
+        var s_TempBuffer = Buffer.alloc(1);
         s_TempBuffer.writeInt8(p_Value, 0);
         this.Length += 1;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
     },
 
     WriteInt16: function(p_Value) {
-        var s_TempBuffer = new Buffer(2);
+        var s_TempBuffer = Buffer.alloc(2);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeInt16LE(p_Value, 0);
         } else {
@@ -224,7 +224,7 @@ BinaryWriter.prototype = {
     },
 
     WriteInt32: function(p_Value) {
-        var s_TempBuffer = new Buffer(4);
+        var s_TempBuffer = Buffer.alloc(4);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeInt32LE(p_Value, 0);
         } else {
@@ -235,7 +235,7 @@ BinaryWriter.prototype = {
     },
 
     WriteInt64: function(p_Value) {
-        var s_TempBuffer = new Buffer(8);
+        var s_TempBuffer = Buffer.alloc(8);
         var s_Value = BigInt(p_Value);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeBigInt64LE(s_Value, 0);
@@ -247,7 +247,7 @@ BinaryWriter.prototype = {
     },
 
     WriteFloat: function(p_Value) {
-        var s_TempBuffer = new Buffer(4);
+        var s_TempBuffer = Buffer.alloc(4);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeFloatLE(p_Value, 0);
         } else {
@@ -258,7 +258,7 @@ BinaryWriter.prototype = {
     },
 
     WriteDouble: function(p_Value) {
-        var s_TempBuffer = new Buffer(8);
+        var s_TempBuffer = Buffer.alloc(8);
         if (this.Endianness == 'little') {
             s_TempBuffer.writeDoubleLE(p_Value, 0);
         } else {
@@ -285,7 +285,7 @@ BinaryWriter.prototype = {
             throw new Error("Invalid Buffer object provided.");
         }
 
-        var s_TempBuffer = (p_Value instanceof Buffer) ? p_Value : new Buffer(p_Value);
+        var s_TempBuffer = (p_Value instanceof Buffer) ? p_Value : Buffer.from(p_Value);
 
         this.Length += s_TempBuffer.length;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
