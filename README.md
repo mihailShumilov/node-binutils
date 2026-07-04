@@ -14,7 +14,7 @@
 make it easy to parse and produce binary data sequentially, with an API modelled on
 the corresponding .NET classes. Both classes let you choose the byte order
 (`big`- or `little`-endian) and support 8-, 16-, 32- and 64-bit integers, floats,
-doubles, and raw byte runs.
+doubles, raw byte runs, and encoded strings.
 
 ## Table of contents
 
@@ -36,7 +36,8 @@ doubles, and raw byte runs.
 - Sequential `Read*` / `Write*` methods for every common fixed-width type.
 - Per-instance endianness (`big` by default, or `little`).
 - 64-bit integers via JavaScript `BigInt`.
-- Signed and unsigned integers, IEEE-754 `float` and `double`, and raw byte runs.
+- Signed and unsigned integers, IEEE-754 `float` and `double`, raw byte runs, and
+  strings in any `Buffer` encoding.
 - Zero runtime dependencies.
 - Bundled TypeScript type definitions.
 
@@ -90,7 +91,7 @@ you read.
 | ------------ | ----------------------------- | ------- | ------------------------------------------------------------------ |
 | `input`      | `Buffer` \| `number[]` \| `string` | —  | The data to read. A `Buffer` is **copied** so the source is never mutated. |
 | `endianness` | `'big'` \| `'little'`         | `'big'` | Byte order used by all multi-byte reads.                           |
-| `encoding`   | `string`                      | `'ascii'` | Used only when `input` is a `string`, to turn it into bytes.     |
+| `encoding`   | `string`                      | `'ascii'` | Used to turn a `string` input into bytes, and by `ReadString`.   |
 
 Throws `Error` if `input` is not a `Buffer`, array, or string.
 
@@ -109,10 +110,11 @@ Throws `Error` if `input` is not a `Buffer`, array, or string.
 | `ReadFloat()`     | 4     | `number`  | IEEE-754 single precision.                     |
 | `ReadDouble()`    | 8     | `number`  | IEEE-754 double precision.                     |
 | `ReadBytes(count)`| `count` | `Buffer`| Copies `count` bytes into a new `Buffer`.      |
+| `ReadString(count)`| `count` | `string`| Decodes `count` bytes using the instance's `Encoding`. |
 
 If fewer than the required number of bytes remain, integer/float reads return `0`
-(or `0.0`), and `ReadBytes` returns an empty `Buffer` — **without** throwing or
-advancing the position. See [Behavior and best practices](#behavior-and-best-practices).
+(or `0.0`), and `ReadBytes`/`ReadString` return an empty `Buffer`/`string` — **without**
+throwing or advancing the position. See [Behavior and best practices](#behavior-and-best-practices).
 
 #### Reader properties
 
@@ -133,7 +135,7 @@ A writer accumulates bytes in an internal buffer that grows with every write.
 | Parameter    | Type                  | Default   | Description                              |
 | ------------ | --------------------- | --------- | ---------------------------------------- |
 | `endianness` | `'big'` \| `'little'` | `'big'`   | Byte order used by all multi-byte writes.|
-| `encoding`   | `string`              | `'ascii'` | Stored on the instance; reserved.        |
+| `encoding`   | `string`              | `'ascii'` | Used by `WriteString` to encode strings. |
 
 #### Write methods
 
@@ -150,6 +152,7 @@ A writer accumulates bytes in an internal buffer that grows with every write.
 | `WriteFloat(value)`   | 4     | `number`            | IEEE-754 single precision.                         |
 | `WriteDouble(value)`  | 8     | `number`            | IEEE-754 double precision.                         |
 | `WriteBytes(value)`   | varies| `Buffer` \| `number[]` \| `string` | Strings are written as one byte per character code. Throws on any other type. |
+| `WriteString(value)`  | varies| `string`            | Encodes the string using the instance's `Encoding`. Throws on any other type. |
 
 Writing a value outside the target type's range throws a `RangeError` (the standard
 Node.js `Buffer` write behavior) — e.g. `WriteUInt8(256)`.
@@ -191,6 +194,11 @@ Node.js `Buffer` write behavior) — e.g. `WriteUInt8(256)`.
 - **Constructing a reader from a string?** Pass the encoding explicitly
   (e.g. `new BinaryReader(text, 'big', 'utf8')`) so the bytes are interpreted the
   way you expect.
+- **The default `'ascii'` encoding is 7-bit only.** Node.js clears the high bit of
+  every byte when decoding `'ascii'`, so text containing characters above `0x7F`
+  does **not** round-trip through `WriteString`/`ReadString` with the default
+  encoding. Pass `'utf8'` (or `'latin1'`) to both constructors when handling
+  non-ASCII text.
 
 ## Examples
 
@@ -218,6 +226,21 @@ console.log(writer.ByteBuffer);                // <Buffer 04 03 02 01>
 
 const reader = new BinaryReader(writer.ByteBuffer, 'little');
 console.log(reader.ReadUInt32().toString(16)); // "1020304"
+```
+
+### Writing and reading strings
+
+```javascript
+const { BinaryReader, BinaryWriter } = require('binutils64');
+
+const text = 'héllo';
+const writer = new BinaryWriter('big', 'utf8');
+writer.WriteUInt8(Buffer.byteLength(text, 'utf8')); // length prefix: 6
+writer.WriteString(text);
+
+const reader = new BinaryReader(writer.ByteBuffer, 'big', 'utf8');
+const length = reader.ReadUInt8();                  // 6
+console.log(reader.ReadString(length));             // "héllo"
 ```
 
 ### Parsing a structured record

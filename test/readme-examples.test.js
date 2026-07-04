@@ -31,3 +31,16 @@ test('README writer example', function() {
     );
     assert.equal(writer.Length, 15);
 });
+
+test('README string example', function() {
+    var text = 'héllo';
+    var writer = new binutils.BinaryWriter('big', 'utf8');
+
+    writer.WriteUInt8(Buffer.byteLength(text, 'utf8'));
+    writer.WriteString(text);
+
+    var reader = new binutils.BinaryReader(writer.ByteBuffer, 'big', 'utf8');
+    var length = reader.ReadUInt8();
+    assert.equal(length, 6);
+    assert.equal(reader.ReadString(length), 'héllo');
+});

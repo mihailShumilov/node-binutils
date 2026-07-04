@@ -144,6 +144,17 @@ BinaryReader.prototype = {
 
         this.Position += p_Count;
         return s_Val;
+    },
+
+    ReadString: function(p_Count) {
+        if (p_Count <= 0 || p_Count > this.ByteBuffer.length) {
+            return '';
+        }
+
+        var s_Val = this.ByteBuffer.toString(this.Encoding, 0, p_Count);
+        this.ByteBuffer = this.ByteBuffer.slice(p_Count);
+        this.Position += p_Count;
+        return s_Val;
     }
 };
 
@@ -287,6 +298,16 @@ BinaryWriter.prototype = {
 
         var s_TempBuffer = (p_Value instanceof Buffer) ? p_Value : Buffer.from(p_Value);
 
+        this.Length += s_TempBuffer.length;
+        this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
+    },
+
+    WriteString: function(p_Value) {
+        if (typeof p_Value != 'string') {
+            throw new Error("Invalid string provided.");
+        }
+
+        var s_TempBuffer = Buffer.from(p_Value, this.Encoding);
         this.Length += s_TempBuffer.length;
         this.ByteBuffer = Buffer.concat([this.ByteBuffer, s_TempBuffer], this.Length);
     }
