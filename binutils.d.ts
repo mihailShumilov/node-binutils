@@ -21,7 +21,7 @@ declare namespace binutils {
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte reads. */
         Endianness: Endianness;
-        /** Encoding used to turn a string input into bytes. */
+        /** Encoding used to turn a string input into bytes and to decode `ReadString`. */
         Encoding: BufferEncoding;
         /** Length of the original input in bytes. Never changes as you read. */
         Length: number;
@@ -50,6 +50,8 @@ declare namespace binutils {
         ReadDouble(): number;
         /** Copies `count` bytes into a new Buffer. Returns an empty Buffer (without advancing) if fewer than `count` bytes remain. */
         ReadBytes(count: number): Buffer;
+        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain. */
+        ReadString(count: number): string;
     }
 
     class BinaryWriter {
@@ -60,7 +62,7 @@ declare namespace binutils {
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte writes. */
         Endianness: Endianness;
-        /** Stored on the instance; reserved. */
+        /** Encoding used by `WriteString`. */
         Encoding: BufferEncoding;
         /** The current length of `ByteBuffer`. */
         Length: number;
@@ -79,5 +81,7 @@ declare namespace binutils {
         WriteDouble(value: number): void;
         /** Strings are written as one byte per character code. Throws on any other input type. */
         WriteBytes(value: Buffer | ReadonlyArray<number> | string): void;
+        /** Encodes the string using the instance's `Encoding`. Throws on any other input type. */
+        WriteString(value: string): void;
     }
 }
