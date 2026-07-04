@@ -1,6 +1,6 @@
 {
     "name": "binutils64",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "author": "Mihail Shumilov <mschumilow@gmail.com>",
     "description": "A .NET-like BinaryReader and BinaryWriter with endianness support.",
     "license": "MIT",
