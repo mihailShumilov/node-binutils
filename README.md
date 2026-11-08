@@ -14,7 +14,8 @@
 make it easy to parse and produce binary data sequentially, with an API modelled on
 the corresponding .NET classes. Both classes let you choose the byte order
 (`big`- or `little`-endian) and support 8-, 16-, 32- and 64-bit integers, floats,
-doubles, raw byte runs, and encoded strings.
+doubles, booleans, LEB128 varints, raw byte runs, and encoded or null-terminated
+strings.
 
 ## Table of contents
 
@@ -34,10 +35,14 @@ doubles, raw byte runs, and encoded strings.
 ## Features
 
 - Sequential `Read*` / `Write*` methods for every common fixed-width type.
+- Non-consuming `Peek*` methods, `Skip` and `ReadRemaining` for protocol parsing.
 - Per-instance endianness (`big` by default, or `little`).
 - 64-bit integers via JavaScript `BigInt`.
-- Signed and unsigned integers, IEEE-754 `float` and `double`, raw byte runs, and
-  strings in any `Buffer` encoding.
+- Signed and unsigned integers, IEEE-754 `float` and `double`, booleans, raw byte
+  runs, strings in any `Buffer` encoding, and null-terminated strings.
+- LEB128 varints (unsigned and ZigZag-signed, 32- and 64-bit).
+- Opt-in strict mode that throws on truncated input.
+- Linear-time writes: thousands of small writes stay fast.
 - Zero runtime dependencies.
 - Bundled TypeScript type definitions.
 
@@ -85,15 +90,19 @@ console.log(reader.ReadBytes(5)); // <Buffer 05 04 03 02 01>
 A reader wraps an immutable copy of the input data and consumes it from the front as
 you read.
 
-#### `new BinaryReader(input, [endianness], [encoding])`
+#### `new BinaryReader(input, [endianness], [encoding], [options])`
 
 | Parameter    | Type                          | Default | Description                                                        |
 | ------------ | ----------------------------- | ------- | ------------------------------------------------------------------ |
-| `input`      | `Buffer` \| `number[]` \| `string` | —  | The data to read. A `Buffer` is **copied** so the source is never mutated. |
+| `input`      | `Buffer` \| `Uint8Array` \| `number[]` \| `string` | — | The data to read. A `Buffer` or `Uint8Array` is **copied** so the source is never mutated. Array elements must be integers from 0 to 255. |
 | `endianness` | `'big'` \| `'little'`         | `'big'` | Byte order used by all multi-byte reads.                           |
-| `encoding`   | `string`                      | `'ascii'` | Used to turn a `string` input into bytes, and by `ReadString`.   |
+| `encoding`   | `string`                      | `'ascii'` | Used to turn a `string` input into bytes, and by `ReadString`/`ReadCString`. |
+| `options`    | `{ Strict?: boolean }`        | `{}`    | `Strict: true` makes short reads throw a `RangeError` instead of returning a zero value. See [Strict mode](#strict-mode). |
 
-Throws `Error` if `input` is not a `Buffer`, array, or string.
+Throws `Error` if `input` is not a `Buffer`, `Uint8Array`, array or string,
+`TypeError`/`RangeError` if an array element is not a byte, and `TypeError` if
+`endianness` is not `'big'`/`'little'` or `encoding` is not a known `Buffer`
+encoding. Calling it without `new` also works.
 
 #### Read methods
 
@@ -109,33 +118,60 @@ Throws `Error` if `input` is not a `Buffer`, array, or string.
 | `ReadInt64()`     | 8     | `BigInt`  | Honors endianness. Returns a `BigInt`.         |
 | `ReadFloat()`     | 4     | `number`  | IEEE-754 single precision.                     |
 | `ReadDouble()`    | 8     | `number`  | IEEE-754 double precision.                     |
+| `ReadBoolean()`    | 1     | `boolean` | Any non-zero byte is `true`.                   |
 | `ReadBytes(count)`| `count` | `Buffer`| Copies `count` bytes into a new `Buffer`.      |
-| `ReadString(count)`| `count` | `string`| Decodes `count` bytes using the instance's `Encoding`. |
+| `ReadString(count)`| `count` | `string`| Decodes `count` **bytes** (not characters) using the instance's `Encoding`. |
+| `ReadCString()`   | varies | `string` | Reads up to the next `0x00` byte, consumes the terminator, decodes the bytes before it. Use with byte-oriented encodings (not `utf16le`). |
+| `ReadRemaining()` | rest  | `Buffer`  | Copies all remaining bytes and consumes them.  |
+| `Skip(count)`     | `count` | —       | Advances without returning data. Does nothing if fewer than `count` bytes remain. |
+| `ReadVarUInt32()` | 1–5   | `number`  | Unsigned LEB128 varint.                        |
+| `ReadVarInt32()`  | 1–5   | `number`  | ZigZag-encoded signed LEB128 varint.           |
+| `ReadVarUInt64()` | 1–10  | `BigInt`  | Unsigned LEB128 varint.                        |
+| `ReadVarInt64()`  | 1–10  | `BigInt`  | ZigZag-encoded signed LEB128 varint.           |
 
-If fewer than the required number of bytes remain, integer/float reads return `0`
-(or `0.0`), and `ReadBytes`/`ReadString` return an empty `Buffer`/`string` — **without**
-throwing or advancing the position. See [Behavior and best practices](#behavior-and-best-practices).
+Varints are self-describing, so `Endianness` does not apply to them.
+
+If fewer than the required number of bytes remain, numeric reads return `0`
+(or `0.0`), `ReadBoolean` returns `false`, `ReadBytes`/`ReadString`/`ReadCString`
+return an empty `Buffer`/`string`, and truncated or overlong varints return `0` —
+**without** throwing or advancing the position. A `count` that is not a non-negative
+integer is treated the same way. Short 64-bit reads return the **number** `0`, not
+`0n`. To get errors instead, use [strict mode](#strict-mode).
+
+#### Peek methods
+
+`PeekUInt8()`, `PeekInt8()`, `PeekUInt16()`, `PeekInt16()`, `PeekUInt32()`,
+`PeekInt32()`, `PeekUInt64()`, `PeekInt64()`, `PeekFloat()`, `PeekDouble()`,
+`PeekBoolean()` and `PeekBytes(count)` return the same value as the matching
+`Read*` method but never advance `Position` or change `ByteBuffer`. Short peeks
+return the same zero value as reads (or throw in strict mode). `PeekBytes` returns a
+copy.
 
 #### Reader properties
 
 | Property     | Type     | Description                                                         |
 | ------------ | -------- | ------------------------------------------------------------------- |
-| `ByteBuffer` | `Buffer` | The **remaining** unread data. Shrinks as you read.                 |
-| `Position`   | `number` | Number of bytes consumed so far (starts at `0`).                    |
+| `ByteBuffer` | `Buffer` | The **remaining** unread data (a view, not a copy). Shrinks as you read. Assigning a `Buffer` replaces the unread data. |
+| `Position`   | `number` | Number of bytes consumed so far (starts at `0`). Assigning it does not seek. |
 | `Length`     | `number` | The length of the original input. Does **not** change as you read.  |
-| `Endianness` | `string` | `'big'` or `'little'`.                                               |
-| `Encoding`   | `string` | The encoding passed to the constructor.                             |
+| `Endianness` | `string` | `'big'` or `'little'`. Changing it affects the next read.            |
+| `Encoding`   | `string` | The encoding passed to the constructor. Changing it affects the next read. |
+| `Strict`     | `boolean`| Whether short reads throw. Set from `options.Strict`.               |
 
 ### BinaryWriter
 
-A writer accumulates bytes in an internal buffer that grows with every write.
+A writer accumulates bytes as you write. Each write is amortized O(1); the bytes are
+joined once, when you read `ByteBuffer`.
 
 #### `new BinaryWriter([endianness], [encoding])`
 
 | Parameter    | Type                  | Default   | Description                              |
 | ------------ | --------------------- | --------- | ---------------------------------------- |
 | `endianness` | `'big'` \| `'little'` | `'big'`   | Byte order used by all multi-byte writes.|
-| `encoding`   | `string`              | `'ascii'` | Used by `WriteString` to encode strings. |
+| `encoding`   | `string`              | `'ascii'` | Used by `WriteString`/`WriteCString` to encode strings. |
+
+Throws `TypeError` if `endianness` is not `'big'`/`'little'` or `encoding` is not a
+known `Buffer` encoding. Calling it without `new` also works.
 
 #### Write methods
 
@@ -147,22 +183,31 @@ A writer accumulates bytes in an internal buffer that grows with every write.
 | `WriteInt16(value)`   | 2     | `number`            | Honors endianness.                                 |
 | `WriteUInt32(value)`  | 4     | `number`            | Honors endianness.                                 |
 | `WriteInt32(value)`   | 4     | `number`            | Honors endianness.                                 |
-| `WriteUInt64(value)`  | 8     | `number` \| `BigInt`| Coerced with `BigInt(value)`; honors endianness.   |
-| `WriteInt64(value)`   | 8     | `number` \| `BigInt`| Coerced with `BigInt(value)`; honors endianness.   |
+| `WriteUInt64(value)`  | 8     | `number` \| `BigInt`| Integer `number` or `BigInt`; honors endianness.   |
+| `WriteInt64(value)`   | 8     | `number` \| `BigInt`| Integer `number` or `BigInt`; honors endianness.   |
 | `WriteFloat(value)`   | 4     | `number`            | IEEE-754 single precision.                         |
 | `WriteDouble(value)`  | 8     | `number`            | IEEE-754 double precision.                         |
-| `WriteBytes(value)`   | varies| `Buffer` \| `number[]` \| `string` | Strings are written as one byte per character code. Throws on any other type. |
+| `WriteBoolean(value)` | 1     | any                 | `0x01` if truthy, `0x00` otherwise.                |
+| `WriteBytes(value)`   | varies| `Buffer` \| `Uint8Array` \| `number[]` \| `string` | Appends a copy. Strings are written one byte per character code (latin1); characters above U+00FF throw a `RangeError`. Array elements must be integers 0–255. Throws on any other type. |
 | `WriteString(value)`  | varies| `string`            | Encodes the string using the instance's `Encoding`. Throws on any other type. |
+| `WriteCString(value)` | varies| `string`            | Like `WriteString`, plus a `0x00` terminator. Throws a `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or any text in `utf16le`). |
+| `WriteVarUInt32(value)` | 1–5 | `number`            | Unsigned LEB128, `0`–`0xFFFFFFFF`.                 |
+| `WriteVarInt32(value)`  | 1–5 | `number`            | ZigZag-signed LEB128, `-2^31`–`2^31-1`.            |
+| `WriteVarUInt64(value)` | 1–10| `number` \| `BigInt`| Unsigned LEB128, `0`–`2^64-1`.                     |
+| `WriteVarInt64(value)`  | 1–10| `number` \| `BigInt`| ZigZag-signed LEB128, `-2^63`–`2^63-1`.            |
 
-Writing a value outside the target type's range throws a `RangeError` (the standard
-Node.js `Buffer` write behavior) — e.g. `WriteUInt8(256)`.
+Integer writers throw a `TypeError` for anything that is not an integer `number`
+(e.g. `1.5`, `NaN`, `'5'`), and a `RangeError` for values outside the type's range —
+e.g. `WriteUInt8(256)`. `WriteFloat`/`WriteDouble` throw a `TypeError` for
+non-numbers (`NaN` and `Infinity` are written as-is). A failed write leaves the
+writer unchanged.
 
 #### Writer properties
 
 | Property     | Type     | Description                                  |
 | ------------ | -------- | -------------------------------------------- |
-| `ByteBuffer` | `Buffer` | All bytes written so far.                    |
-| `Length`     | `number` | The current length of `ByteBuffer`.          |
+| `ByteBuffer` | `Buffer` | All bytes written so far. Assigning a `Buffer` replaces the contents and resets `Length`. |
+| `Length`     | `number` | The number of bytes written so far.          |
 | `Endianness` | `string` | `'big'` or `'little'`.                        |
 | `Encoding`   | `string` | The encoding passed to the constructor.      |
 
@@ -174,26 +219,27 @@ Node.js `Buffer` write behavior) — e.g. `WriteUInt8(256)`.
 - **`Length` vs. `Position`.** On a reader, `Length` is the original size and never
   changes; `Position` tracks how much you have consumed. The bytes left to read are
   `Length - Position` (also `ByteBuffer.length`).
-- **Out-of-range reads do not throw.** Reading past the end returns `0` / `0.0` /
-  an empty `Buffer` and leaves `Position` unchanged. Check the remaining length
-  yourself if a short buffer should be treated as an error:
-
-  ```javascript
-  if (reader.ByteBuffer.length < 4) {
-    throw new Error('truncated record');
-  }
-  const value = reader.ReadUInt32();
-  ```
-
-- **64-bit values are `BigInt`s.** `ReadUInt64`/`ReadInt64` always return a `BigInt`.
+- **Out-of-range reads do not throw by default.** Reading past the end returns `0` /
+  `0.0` / `false` / an empty `Buffer` or string and leaves `Position` unchanged. If a
+  short buffer should be an error, turn on [strict mode](#strict-mode).
+- **Look before you read.** `Peek*` methods return the next value without consuming
+  it, which is handy for tag-based dispatch.
+- **64-bit values are `BigInt`s.** `ReadUInt64`/`ReadInt64` return a `BigInt` when 8
+  bytes are available (and the number `0` on a short read, like the other reads).
   When writing, pass a `BigInt` for any value above `Number.MAX_SAFE_INTEGER`
   (`2^53 - 1`) to avoid silent precision loss; smaller `number`s are accepted and
-  coerced automatically.
+  coerced automatically. A `number` above that limit has usually been rounded
+  before it reaches the writer, and is written as that rounded value.
 - **Set endianness once, at construction.** All multi-byte methods follow the
   instance's `Endianness`; reader and writer must agree to round-trip correctly.
-- **Constructing a reader from a string?** Pass the encoding explicitly
-  (e.g. `new BinaryReader(text, 'big', 'utf8')`) so the bytes are interpreted the
-  way you expect.
+  Only `'big'` and `'little'` are accepted. `Endianness` and `Encoding` can be changed
+  later and apply to the next call.
+- **Constructing a reader from a string?** The string is encoded with the reader's
+  `Encoding` (`'ascii'` by default). Pass the encoding explicitly
+  (e.g. `new BinaryReader(text, 'big', 'utf8')`) for non-ASCII text.
+- **`WriteBytes` vs. `WriteString`.** `WriteBytes(string)` writes raw byte values
+  (one per character, latin1) and rejects wider characters. Use `WriteString` for
+  encoded text.
 - **The default `'ascii'` encoding is 7-bit only.** Node.js clears the high bit of
   every byte when decoding `'ascii'`, so text containing characters above `0x7F`
   does **not** round-trip through `WriteString`/`ReadString` with the default
@@ -243,6 +289,49 @@ const length = reader.ReadUInt8();                  // 6
 console.log(reader.ReadString(length));             // "héllo"
 ```
 
+### Strict mode
+
+```javascript
+const { BinaryReader } = require('binutils64');
+
+const reader = new BinaryReader([0x00, 0x01], 'big', 'ascii', { Strict: true });
+reader.ReadUInt16();   // 1
+reader.ReadUInt32();   // throws RangeError: ReadUInt32: need 4 bytes, 0 remaining
+```
+
+In strict mode every `Read*`/`Peek*` method, `Skip`, `ReadCString` (no terminator) and
+the varint readers (truncated or overlong input) throw a `RangeError` instead of
+returning a zero value. An invalid `count` also throws. The failed call does not
+advance `Position`.
+
+### Tag dispatch with peek
+
+```javascript
+const { BinaryReader } = require('binutils64');
+
+const reader = new BinaryReader([0x02, 0x01, 0x00]);
+if (reader.PeekUInt8() === 0x02) {
+  reader.Skip(1);                       // consume the tag
+  console.log(reader.ReadUInt16());     // 256
+}
+```
+
+### Varints and null-terminated strings
+
+```javascript
+const { BinaryReader, BinaryWriter } = require('binutils64');
+
+const writer = new BinaryWriter('big', 'utf8');
+writer.WriteVarUInt32(300);         // <Buffer ac 02>
+writer.WriteVarInt32(-1);           // <Buffer 01>  (ZigZag)
+writer.WriteCString('name');        // <Buffer 6e 61 6d 65 00>
+
+const reader = new BinaryReader(writer.ByteBuffer, 'big', 'utf8');
+console.log(reader.ReadVarUInt32()); // 300
+console.log(reader.ReadVarInt32());  // -1
+console.log(reader.ReadCString());   // "name"
+```
+
 ### Parsing a structured record
 
 ```javascript
@@ -277,8 +366,10 @@ npm test     # runs `node --test`
 ```
 
 The suite covers every reader/writer method, round-trips across both endiannesses,
-edge cases (out-of-range reads, constructor input types, buffer-copy isolation), and
-the documented examples. Continuous integration runs it on Node.js 20, 22 and 24.
+edge cases (out-of-range reads, strict mode, input validation, buffer-copy
+isolation), and the documented examples. Continuous integration runs it on Node.js
+20, 22 and 24, and runs a dependency-free smoke test (`node test/smoke.js`) on
+Node.js 12, 14, 16 and 18.
 
 ## Contributing
 

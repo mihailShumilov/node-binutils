@@ -5,6 +5,7 @@ var js = require('@eslint/js');
 var s_NodeGlobals = {
     Buffer: 'readonly',
     BigInt: 'readonly',
+    Uint8Array: 'readonly',
     console: 'readonly',
     process: 'readonly',
     module: 'writable',
@@ -25,7 +26,7 @@ module.exports = [
         }
     },
     {
-        files: ['test/**/*.js', 'eslint.config.js'],
+        files: ['test/**/*.js', '.claude/**/*.js', 'eslint.config.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',

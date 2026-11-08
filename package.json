@@ -25,7 +25,8 @@
         ".": {
             "types": "./binutils.d.ts",
             "default": "./binutils.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "files": [
         "binutils.js",
