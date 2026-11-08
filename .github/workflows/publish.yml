@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   publish:
+    # Manual runs may only publish from master.
+    if: github.event_name == 'release' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -18,6 +20,16 @@ jobs:
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
+      - name: Check the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run lint
       - run: npm test
       # Auth via npm Trusted Publishing (OIDC) — no token secret required.
       - run: npm publish --provenance --access public
