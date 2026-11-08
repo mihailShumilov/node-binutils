@@ -38,6 +38,25 @@ assert.strictEqual(r.ReadVarInt64(), BigInt(-1));
 assert.strictEqual(r.Position, r.Length);
 assert.strictEqual(r.ReadUInt32(), 0);
 
+// Small results come from a typed-array slice: on every Node version they must be
+// Buffers with an exactly-sized ArrayBuffer of their own, with no deprecation warning.
+process.on('warning', function(p_Warning) {
+    throw new Error('unexpected warning: ' + p_Warning.name + ' ' + p_Warning.message);
+});
+var c = new binutils.BinaryReader([1, 2, 3, 4, 5]);
+c.ReadUInt8();
+[c.PeekBytes(2), c.ReadBytes(2), c.ReadRemaining()].forEach(function(p_Copy) {
+    assert.ok(Buffer.isBuffer(p_Copy));
+    assert.strictEqual(typeof p_Copy.readUInt8, 'function');
+    assert.strictEqual(p_Copy.byteOffset, 0);
+    assert.strictEqual(p_Copy.buffer.byteLength, p_Copy.length);
+});
+var g = new binutils.BinaryWriter();
+g.WriteBytes([1, 2, 3]);
+g.WriteString('abc');
+assert.strictEqual(g.ByteBuffer.toString('hex'), '010203616263');
+assert.strictEqual(g.ByteBuffer.buffer.byteLength, 6);
+
 var s = new binutils.BinaryReader([1], 'big', 'ascii', { Strict: true });
 assert.throws(function() { s.ReadUInt16(); }, RangeError);
 

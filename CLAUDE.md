@@ -60,9 +60,10 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   Private state lives in one hidden object, `this._S` (reader: `Owner`, `Data`,
   `Offset`, `View`, `ViewOffset`, `Strict`; writer: `Owner`, `Buffer`, `Used`,
   `Exposed`, `ReadStreak`, `Strict`). Private helpers are module-level functions
-  that take the instance (`Ensure(this, N, 'ReadX')`, `Advance(this, N)`,
-  `Append(this, Scratch, N)`), not prototype methods, so public methods keep working
-  when borrowed or mixed into other objects, as they did in 0.3.0.
+  that take the instance (`Ensure(this, N, 'ReadX')` returning the state or `null`,
+  `Advance(this, s_State, N)`, `Append(this, Scratch, N)`), not prototype methods, so
+  public methods keep working when borrowed or mixed into other objects, as they did
+  in 0.3.0.
 - Object-literal getters/setters are allowed (they are ES5); BigInt literals are
   not — use `BigInt(1)`.
 - Function parameters are prefixed `p_` (`p_InputBuffer`, `p_Value`).
@@ -93,8 +94,9 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   `Peek*` methods never advance.
 - **Out-of-range reads return a zero value and do not throw by default** — `0`,
   `0.0`, `false`, `''` or an empty Buffer, without advancing. `ReadBytes`/`PeekBytes`/
-  `Skip` resolve odd counts through `ResolveCount`, which reproduces 0.3.0 (fractions
-  round down; negative/non-number counts throw Node's error).
+  `Skip` resolve odd counts through `ResolveCount`. For `ReadBytes` it reproduces
+  0.3.0 (fractions round down; negative/NaN/non-number counts throw Node's error);
+  the new `PeekBytes`/`Skip` pass `p_Lenient` and return the empty value instead.
 - `ReadUInt64`/`ReadInt64` return a `BigInt` (via `readBigUInt64*`/`readBigInt64*`),
   and the **number** `0` on a short read.
 - The reader constructor copies `Buffer`/`Uint8Array` input so the caller's data is
@@ -102,7 +104,7 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   `Position`/`Length` (0.3.0 behavior). `ReadBytes`/`PeekBytes`/`ReadRemaining`
   return exactly-sized copies (`CopyOut`).
 - The writer keeps one growable buffer (`_S.Buffer`, `_S.Used`). Fixed-width writes go
-  through the module-level `Scratch` buffer and `Append(Scratch, N)`. Never
+  through the module-level `Scratch` buffer and `Append(this, Scratch, N)`. Never
   reintroduce a per-write concat of the whole buffer (O(n²)).
 - Writer `ByteBuffer` semantics match 0.3.0: an exact-size Buffer with its own
   ArrayBuffer; the same object until the next write; patches made to it before the
@@ -115,19 +117,21 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   so a failed write leaves the writer unchanged.
 - `WriteBytes` accepts a `Buffer`, `Uint8Array`, byte `Array`, or latin1 `string`,
   and throws the 0.3.0 `Error("Invalid Buffer object provided.")` on any other input.
-- Constructors work without `new`. An `options` argument that does not ask for
-  strict mode is ignored (0.3.0 ignored extra arguments); `{ Strict: true }` with an
-  unknown key, or a mis-cased `strict` key, throws. `endianness`/`encoding` are
+- Constructors work without `new`. An `options` argument without a truthy `Strict`
+  is ignored entirely, including `{ strict: true }` (0.3.0 ignored extra arguments);
+  `{ Strict: true }` with any other key throws. `endianness`/`encoding` are
   validated only in strict mode. `_S` and the prototype `Strict` accessor are
   non-enumerable; assigning `Strict` stores a plain value and never changes the mode.
 - **Objects without own state are adopted.** Copies made with `Object.assign`/spread,
   `Object.create` forks, frozen instances and borrowed methods all behaved in 0.3.0
   because its state was public. `ReaderState`/`WriterState` check
   `this._S.Owner === this` and otherwise rebuild private state from the public
-  `ByteBuffer` (`AdoptReader`/`AdoptWriter`). Every public method must reach state
-  through `Ensure`/`ResolveCount`/`Append` or `ReaderState`/`WriterState` before
-  touching `this._S`. Objects that cannot take `_S` (frozen or non-extensible copies)
-  get detached state (`Owner: null`, kept in the `DetachedState` WeakMap and found
-  through the prototype `_S` getter); it is rebuilt from the public `ByteBuffer` on
-  every call and progress is written back to it, as 0.3.0 did. The "unusual usage"
-  cases in `test/compat.test.js` cover all of this.
+  `ByteBuffer` (`AdoptReader`/`AdoptWriter`; a fork inherits `Strict`). Every public
+  method gets the state once (`ReaderState`/`WriterState`/`Ensure`, or inside
+  `Append`) and passes it on; never re-read `this._S` afterwards. Objects that cannot
+  take `_S` (frozen or non-extensible copies) get detached state (`Owner: null`) that
+  lives only for the call: it is rebuilt from the public `ByteBuffer` every time and
+  progress is written back to it, as 0.3.0 did. A frozen instance that owns its state
+  behaves like a frozen 0.3.0 object: `Advance`/`Append` skip storing progress when the
+  public `Position`/`Length` could not change, and the `ByteBuffer` setters ignore
+  assignment. The "unusual usage" cases in `test/compat.test.js` cover all of this.

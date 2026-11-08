@@ -103,9 +103,10 @@ you read.
 | `options`    | `{ Strict?: boolean }`        | `{}`    | `Strict: true` turns on [strict mode](#strict-mode).               |
 
 Throws `Error` if `input` is not a `Buffer`, `Uint8Array`, array or string, and
-`TypeError` if `options` asks for strict mode but has an unknown key. Any other
-`options` value is ignored, as 0.3 ignored extra arguments. Calling it without `new`
-also works. In strict mode the constructor also rejects array elements that are
+`TypeError` if `options` turns strict mode on (`Strict` is truthy) but has another
+key. Any other `options` value is ignored, including an object without a truthy
+`Strict` such as `{ strict: true }`, as 0.3 ignored extra arguments. Calling it
+without `new` also works. In strict mode the constructor also rejects array elements that are
 not bytes, non-ASCII string input without an explicit `encoding`, and an invalid
 `endianness` or `encoding`.
 
@@ -126,9 +127,9 @@ not bytes, non-ASCII string input without an explicit `encoding`, and an invalid
 | `ReadBoolean()`    | 1     | `boolean` | Any non-zero byte is `true`.                   |
 | `ReadBytes(count)`| `count` | `Buffer`| Copies `count` bytes into a new `Buffer`.      |
 | `ReadString(count)`| `count` | `string`| Decodes `count` **bytes** (not characters) using the instance's `Encoding`. |
-| `ReadCString()`   | varies | `string` | Reads up to the next `0x00` byte, consumes the terminator, decodes the bytes before it. Use with byte-oriented encodings (not `utf16le`). |
+| `ReadCString()`   | varies | `string` | Reads up to the next `0x00` byte, consumes the terminator, decodes the bytes before it. Use an encoding in which a `0x00` byte only ever stands for U+0000 (`ascii`, `latin1`, `utf8`), not `utf16le`. |
 | `ReadRemaining()` | rest  | `Buffer`  | Copies all remaining bytes and consumes them.  |
-| `Skip(count)`     | `count` | —       | Advances without returning data. Does nothing if fewer than `count` bytes remain. Accepts the same `count` values as `ReadBytes`. |
+| `Skip(count)`     | `count` | —       | Advances without returning data. Does nothing if fewer than `count` bytes remain or `count` is invalid (see below). |
 | `ReadVarUInt32()` | 1–5   | `number`  | Unsigned LEB128 varint.                        |
 | `ReadVarInt32()`  | 1–5   | `number`  | ZigZag-encoded signed LEB128 varint.           |
 | `ReadVarUInt64()` | 1–10  | `BigInt`  | Unsigned LEB128 varint.                        |
@@ -142,10 +143,14 @@ return an empty `Buffer`/`string`, and truncated or overlong varints return `0` 
 **without** throwing or advancing the position. Short 64-bit reads return the
 **number** `0`, not `0n`. To get errors instead, use [strict mode](#strict-mode).
 
-`ReadBytes`, `PeekBytes` and `Skip` handle an unusual `count` exactly as 0.3 did: a
-fraction is rounded down, and a negative or non-number `count` throws Node's own
-`RangeError`/`TypeError`. `ReadString` returns an empty string for a `count` of `0`
-or less. In strict mode every invalid `count` throws a `RangeError` instead.
+`ReadBytes` handles an unusual `count` exactly as 0.3's `ReadBytes` did: a fraction
+is rounded down, and a negative, `NaN` or non-number `count` throws Node's own
+`RangeError`/`TypeError`. `PeekBytes` and `Skip` (new in 0.4) also round a fraction
+down, but treat any other invalid `count` like one that is too large: `PeekBytes`
+returns an empty `Buffer` and `Skip` does nothing. `ReadString` returns an empty
+string for a `count` of `0` or less. In strict mode every invalid `count` throws
+instead: `TypeError` for a non-number, `RangeError` for a negative, fractional or
+infinite one.
 
 #### Peek methods
 
@@ -165,7 +170,7 @@ copy.
 | `Length`     | `number` | The length of the original input. Does **not** change as you read.  |
 | `Endianness` | `string` | `'big'` or `'little'`. Changing it affects the next read.            |
 | `Encoding`   | `string` | The encoding passed to the constructor. Changing it affects the next read. |
-| `Strict`     | `boolean`| Whether [strict mode](#strict-mode) is on. Set from `options.Strict`; not enumerable. Assigning it does not change the mode. |
+| `Strict`     | `boolean`| Whether [strict mode](#strict-mode) is on. Set from `options.Strict` (an `Object.create` fork inherits it). Not enumerable until assigned: assigning it stores a plain value, as in 0.3, and does not change the mode. |
 
 ### BinaryWriter
 
@@ -180,8 +185,8 @@ A writer accumulates bytes as you write. Each write is amortized O(1); reading
 | `encoding`   | `string`              | `'ascii'` | Used by `WriteString`/`WriteCString` to encode strings. |
 | `options`    | `{ Strict?: boolean }`| `{}`      | `Strict: true` turns on [strict mode](#strict-mode). |
 
-Throws `TypeError` if `options` asks for strict mode but has an unknown key; any
-other `options` value is ignored. In strict mode it also throws `TypeError` if `endianness` is not `'big'`/`'little'` or
+Throws `TypeError` if `options` turns strict mode on but has another key; any
+other `options` value is ignored (see the reader constructor). In strict mode it also throws `TypeError` if `endianness` is not `'big'`/`'little'` or
 `encoding` is not a known `Buffer` encoding. Calling it without `new` also works.
 
 #### Write methods
@@ -198,7 +203,7 @@ other `options` value is ignored. In strict mode it also throws `TypeError` if `
 | `WriteInt64(value)`   | 8     | `number` \| `BigInt`| Honors endianness.                                 |
 | `WriteFloat(value)`   | 4     | `number`            | IEEE-754 single precision.                         |
 | `WriteDouble(value)`  | 8     | `number`            | IEEE-754 double precision.                         |
-| `WriteBoolean(value)` | 1     | any                 | `0x01` if truthy, `0x00` otherwise.                |
+| `WriteBoolean(value)` | 1     | any                 | `0x01` if truthy, `0x00` otherwise. Strict mode accepts only booleans. |
 | `WriteBytes(value)`   | varies| `Buffer` \| `Uint8Array` \| `number[]` \| `string` | Appends a copy. Strings are written one byte per character code (latin1). Throws on any other type. |
 | `WriteString(value)`  | varies| `string`            | Encodes the string using the instance's `Encoding`. Throws on any other type. Lossy encodings (`hex`, `base64`, characters outside `ascii`/`latin1`) write what Node's `Buffer.from` produces. |
 | `WriteCString(value)` | varies| `string`            | Like `WriteString`, plus a `0x00` terminator. Throws a `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or any text in `utf16le`). |
@@ -225,7 +230,7 @@ on every writer. A failed write leaves the writer unchanged.
 | `Length`     | `number` | The number of bytes written so far.          |
 | `Endianness` | `string` | `'big'` or `'little'`.                        |
 | `Encoding`   | `string` | The encoding passed to the constructor.      |
-| `Strict`     | `boolean`| Whether [strict mode](#strict-mode) is on. Set from `options.Strict`; not enumerable. Assigning it does not change the mode. |
+| `Strict`     | `boolean`| Whether [strict mode](#strict-mode) is on. Set from `options.Strict` (an `Object.create` fork inherits it). Not enumerable until assigned: assigning it stores a plain value, as in 0.3, and does not change the mode. |
 
 ### Strict mode
 
@@ -236,10 +241,10 @@ returns without it. It is off by default, so code written for 0.3 is unaffected.
 | Class          | Without `Strict` (0.3 behavior)                                    | With `Strict: true`                                   |
 | -------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
 | Reader         | Short reads, peeks, `Skip`, `ReadCString` without a terminator and truncated or overlong varints return a zero value. | They throw `RangeError` and do not advance. `ReadRemaining` never throws. |
-| Reader         | Odd `count` values are handled as described under [Read methods](#read-methods). | Any `count` that is not a non-negative integer throws `RangeError`. |
+| Reader         | Odd `count` values are handled as described under [Read methods](#read-methods). Any value can be assigned to `ByteBuffer` (reads then return zero values). | A non-number `count` throws `TypeError`; a negative, fractional or infinite one throws `RangeError`. Assigning anything but a `Buffer`/`Uint8Array` to `ByteBuffer` throws `TypeError`. |
 | Reader constructor | Array elements are truncated to a byte; a string input without `encoding` is UTF-8; any `endianness`/`encoding` is stored (a string input with an unknown `encoding` throws Node's `TypeError`). | Non-byte elements, non-ASCII strings without `encoding`, and invalid `endianness`/`encoding` throw. |
 | Writer         | Values are coerced by Node (`1.5` → `1`, `'5'` → `5`, `NaN` → `0`; the 64-bit writers use `BigInt()` and throw on fractions and `NaN`). A `number` above `2^53 - 1` passed to a 64-bit writer is written as given. | Non-integers throw `TypeError`; the 64-bit writers (`WriteUInt64`, `WriteInt64`, `WriteVarUInt64`, `WriteVarInt64`) throw `RangeError` for a `number` outside `±Number.MAX_SAFE_INTEGER` (pass a `BigInt`). `WriteFloat`/`WriteDouble` throw `TypeError` for non-numbers. |
-| Writer         | `WriteBytes` keeps the low byte of each array element and character code; `WriteString` writes what `Buffer.from` produces. | Array elements outside `0`–`255`, `WriteBytes` characters above U+00FF, and `WriteString` characters the `ascii`/`latin1` encoding cannot represent throw `RangeError`. |
+| Writer         | `WriteBytes` keeps the low byte of each array element and character code; `WriteString` writes what `Buffer.from` produces; `WriteBoolean` writes the truthiness of any value; any value can be assigned to `ByteBuffer`. | Array elements outside `0`–`255`, `WriteBytes` characters above U+00FF, and `WriteString`/`WriteCString` characters the `ascii`/`latin1` (`binary`) encoding cannot represent throw `RangeError`. `WriteBoolean` throws `TypeError` for a non-boolean, and assigning anything but a `Buffer`/`Uint8Array` to `ByteBuffer` throws `TypeError`. |
 | Writer constructor | Any `endianness`/`encoding` is stored. | Invalid `endianness`/`encoding` throws `TypeError`. |
 
 Errors added by strict mode name the method and the offending value, e.g.
@@ -409,9 +414,15 @@ The only differences are fixes for calls that misbehaved in 0.3:
 - A `Uint8Array` is accepted as reader input and by `WriteBytes` (0.3 threw).
 - Reading after `reader.ByteBuffer = null` returns zero values instead of throwing a
   `TypeError`.
-- On an instance frozen with `Object.freeze`, reads and writes still consume and
-  append data internally, while the frozen `Position`/`Length` stay unchanged. In 0.3
-  they silently did nothing. Freeze a reader or writer only once you are done with it.
+
+A few things can be observed that did not exist in 0.3:
+
+- Instances inherit a non-enumerable `Strict` property, so `reader.Strict` is `false`
+  instead of `undefined` and `'Strict' in reader` is `true`.
+- `reader.constructor` is `BinaryReader` and `writer.constructor` is `BinaryWriter`
+  (in 0.3 both were `Object`).
+- Calling a constructor without `new` returns a new instance; in 0.3 it returned
+  `undefined` and set the properties on the global object.
 
 New in 0.4: `Peek*`, `Skip`, `ReadRemaining`, `ReadBoolean`/`WriteBoolean`,
 `ReadCString`/`WriteCString`, varints and strict mode. Opt in to strict mode one

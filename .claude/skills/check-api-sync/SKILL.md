@@ -19,8 +19,9 @@ node .claude/skills/check-api-sync/check-api-sync.js
 ```
 
 It loads `binutils.js`, enumerates the public (`PascalCase`) methods on both
-prototypes (instance properties such as `ByteBuffer`, `Length` and `Strict` are
-checked by hand against the property tables), and reports:
+prototypes (instance properties such as `ByteBuffer`, `Length` and the prototype
+`Strict` accessor — `readonly` in the typings — are checked by hand against the
+property tables), and reports:
 
 - members missing from `binutils.d.ts`, `README.md`, or any `test/*.test.js`;
 - methods declared in `binutils.d.ts` that the code does not implement;

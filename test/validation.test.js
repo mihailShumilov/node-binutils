@@ -40,14 +40,25 @@ test('default: ReadString keeps 0.3.0 count handling', function() {
     assert.equal(r.Position, 3);
 });
 
-test('strict: invalid counts throw RangeError without advancing', function() {
-    [-1, NaN, 1.5, Infinity, undefined, null, '2', true].forEach(function(p_Count) {
+test('strict: invalid counts throw without advancing (TypeError for a non-number, RangeError otherwise)', function() {
+    [-1, NaN, 1.5, Infinity, undefined, null, '2', true, Symbol('n'), Object.create(null)].forEach(function(p_Count) {
+        var s_IsNumber = typeof p_Count == 'number';
         ['ReadBytes', 'ReadString', 'PeekBytes', 'Skip'].forEach(function(p_Method) {
             var r = new BinaryReader([1, 2, 3, 4], 'big', 'ascii', STRICT);
-            assert.throws(function() { r[p_Method](p_Count); }, /invalid byte count/, p_Method + ' ' + String(p_Count));
+            var s_Label = p_Method + ' ' + typeof p_Count;
+            if (p_Count === Infinity) {
+                assert.throws(function() { r[p_Method](p_Count); }, { name: 'RangeError', message: p_Method + ': invalid byte count (Infinity)' }, s_Label);
+            } else if (s_IsNumber) {
+                assert.throws(function() { r[p_Method](p_Count); }, { name: 'RangeError', message: /invalid byte count/ }, s_Label);
+            } else {
+                assert.throws(function() { r[p_Method](p_Count); }, { name: 'TypeError', message: new RegExp('^' + p_Method + ': expected a byte count, got ') }, s_Label);
+            }
             assert.equal(r.Position, 0);
         });
     });
+    var s_Reader = new BinaryReader([1], 'big', 'ascii', STRICT);
+    assert.throws(function() { s_Reader.ReadBytes(Symbol('n')); }, { name: 'TypeError', message: 'ReadBytes: expected a byte count, got symbol (Symbol(n))' });
+    assert.throws(function() { s_Reader.Skip(Object.create(null)); }, { name: 'TypeError', message: 'Skip: expected a byte count, got object (object)' });
 });
 
 // --- Constructor input ---
@@ -107,14 +118,14 @@ test('strict: unknown encodings throw in both constructors', function() {
 });
 
 test('extra constructor arguments that 0.3.0 ignored are still ignored', function() {
-    [true, 1, 'Strict', function() {}, { a: 1 }, [], { Strict: false, other: 1 }].forEach(function(p_Options) {
+    [true, 1, 'Strict', function() {}, { a: 1 }, [], { Strict: false, other: 1 }, { strict: true }, { STRICT: true }].forEach(function(p_Options) {
         assert.equal(new BinaryReader([1], 'big', 'ascii', p_Options).Strict, false);
         assert.equal(new BinaryWriter('big', 'ascii', p_Options).Strict, false);
     });
 });
 
 test('a strict options object must have known keys', function() {
-    assert.throws(function() { new BinaryReader([1], 'big', 'ascii', { strict: true }); }, /unknown option 'strict'/);
+    assert.throws(function() { new BinaryReader([1], 'big', 'ascii', { Strict: true, strict: true }); }, /unknown option 'strict'/);
     assert.throws(function() { new BinaryWriter('big', 'ascii', { Strict: true, Strickt: true }); }, /unknown option 'Strickt'/);
     assert.equal(new BinaryReader([1], 'big', 'ascii', null).Strict, false);
     assert.equal(new BinaryWriter('big', 'ascii', {}).Strict, false);

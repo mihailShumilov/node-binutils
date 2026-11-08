@@ -5,19 +5,22 @@ var binutils = require('../binutils.js');
 // These mirror the worked examples in README.md. If the documented output ever
 // changes, the docs and these tests must change together.
 
-test('README reader example', function() {
-    var buffer = Buffer.from([1, 0, 2, 0, 0, 0, 3, 1, 2, 3, 4, 5, 6]);
-    var reader = new binutils.BinaryReader(buffer);
+test('README parsing a structured record example', function() {
+    var reader = new binutils.BinaryReader(Buffer.from([1, 0, 0, 0, 3, 1, 2, 3, 4, 5, 6]));
 
-    assert.equal(reader.ReadUInt8(), 1);
-    assert.equal(reader.ReadUInt16(), 2);
-    assert.equal(reader.ReadUInt32(), 3);
-    assert.deepEqual(Array.from(reader.ReadBytes(6)), [1, 2, 3, 4, 5, 6]);
-    assert.equal(reader.Position, 13);
-    assert.equal(reader.Length, 13);
+    var record = {
+        type: reader.ReadUInt8(),
+        id: reader.ReadUInt32(),
+        payload: reader.ReadBytes(6)
+    };
+    assert.equal(record.type, 1);
+    assert.equal(record.id, 3);
+    assert.equal(record.payload.toString('hex'), '010203040506');
+    assert.equal(reader.Position, 11);
+    assert.equal(reader.Length, 11);
 });
 
-test('README writer example', function() {
+test('README quick start example', function() {
     var writer = new binutils.BinaryWriter();
 
     writer.WriteUInt16(65535);
@@ -30,6 +33,30 @@ test('README writer example', function() {
         [0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 5, 4, 3, 2, 1]
     );
     assert.equal(writer.Length, 15);
+
+    var reader = new binutils.BinaryReader(writer.ByteBuffer);
+    assert.equal(reader.ReadUInt16(), 65535);
+    assert.equal(reader.ReadUInt32(), 0);
+    assert.equal(reader.ReadInt32(), -1);
+    assert.equal(reader.ReadBytes(5).toString('hex'), '0504030201');
+});
+
+test('README round-tripping a 64-bit integer example', function() {
+    var writer = new binutils.BinaryWriter();
+    writer.WriteUInt64(BigInt('0x1234567890ABCDEF'));
+    assert.equal(writer.ByteBuffer.toString('hex'), '1234567890abcdef');
+
+    var reader = new binutils.BinaryReader(writer.ByteBuffer);
+    assert.equal(reader.ReadUInt64(), BigInt('1311768467294899695'));
+});
+
+test('README little-endian example', function() {
+    var writer = new binutils.BinaryWriter('little');
+    writer.WriteUInt32(0x01020304);
+    assert.equal(writer.ByteBuffer.toString('hex'), '04030201');
+
+    var reader = new binutils.BinaryReader(writer.ByteBuffer, 'little');
+    assert.equal(reader.ReadUInt32().toString(16), '1020304');
 });
 
 test('README string example', function() {

@@ -67,15 +67,17 @@ into a reader, assert the read value equals the written one.
   constructing and confirm reader output is unaffected.
 - `ReadUInt64`/`ReadInt64` return a `bigint` (`assert.equal(typeof v, 'bigint')`).
 - README record example: bytes `[1,0,0,0,3,1,2,3,4,5,6]` yield `1`, `3`, a 6-byte
-  buffer, then `Position` and `Length` both `11` (`test/readme-examples.test.js`
-  uses its own 13-byte variant). Every runnable README example in the Quick start
-  and Examples sections has a mirror test there; keep them in step.
+  buffer, then `Position` and `Length` both `11`. Every runnable README example in
+  the Quick start and Examples sections has a mirror test in
+  `test/readme-examples.test.js`; keep them in step.
 - **Strict mode** (`{ Strict: true }`): short reads/peeks, invalid counts, missing
-  C-string terminators and bad varints throw `RangeError` without advancing.
+  C-string terminators and bad varints throw `RangeError` (a non-number count throws
+  `TypeError`) without advancing.
 - **Peek**: peek-then-read returns the same value; `Position`/`ByteBuffer` unchanged.
 - **Invalid counts** (`-1`, `NaN`, `1.5`, `undefined`, `'2'`): by default they keep
   their 0.3.0 result (`ReadBytes(1.5)` reads 1 byte; `ReadBytes(-1)` throws Node's
-  `RangeError`); in strict mode they throw `RangeError` without advancing.
+  `RangeError`); the new `PeekBytes`/`Skip` return the empty value or do nothing
+  instead of throwing; in strict mode they throw without advancing.
 - **0.3.0 compatibility**: `test/compat.test.js` runs seeded random call sequences
   against `test/fixtures/binutils-0.3.0.js` (never edit it). When a default-mode
   behavior is in doubt, compare with the fixture rather than guessing.

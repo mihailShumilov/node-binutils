@@ -27,13 +27,16 @@ report any failures.
    writer using a narrower method than its buffer size (e.g. `writeUInt32LE` into
    an 8-byte buffer — this was the original `WriteUInt64`/`WriteInt64` bug, since
    fixed). 64-bit writers use `writeBigUInt64*`/`writeBigInt64*` and convert with
-   `ToBigInt(p_Value, ...)`. Prefer confirming with a real round-trip.
+   `WriterState(this).Strict ? ToBigInt(p_Value, 'WriteX', true) : BigInt(p_Value)`
+   (methods that existed in 0.3.0) or `ToBigInt(p_Value, 'WriteX', p_Strict)` (new ones). Prefer confirming with a real round-trip.
 2. **Endianness branches** present and correct for every multi-byte method: the
    `'little'` branch uses the `*LE` variant, the else branch uses `*BE`. Single-byte
    methods (`*UInt8`/`*Int8`) must NOT have an endianness branch.
-3. **Reader is destructive and consistent**: each `ReadX` reads at `this._S.Offset`
-   (never index 0, never slicing or reassigning `_S.Data`), guards with
-   `Ensure(this, N, 'ReadX')`, and calls `Advance(this, N)` with exactly `N`.
+3. **Reader is destructive and consistent**: each `ReadX` gets its state once
+   (`var s_State = Ensure(this, N, 'ReadX')`, or `ReaderState(this)`), reads at
+   `s_State.Offset` (never index 0, never slicing or reassigning `s_State.Data`), and
+   calls `Advance(this, s_State, N)` with exactly `N`. Flag any re-read of `this._S`
+   after that: for frozen or non-extensible copies the state lives only for the call.
    `Peek*` methods must NOT call `Advance`. `this.Length` must NOT change on reads.
 4. **Writer accounting**: each `WriteX` validates its argument first (strict-gated
    for methods that existed in 0.3.0), then appends exactly `N` bytes via
@@ -41,7 +44,8 @@ report any failures.
    grows `Length`). The source must hold at least `N` bytes — `Append` may use
    memory that is not zero-filled. A throwing write must leave `Length` and
    `ByteBuffer` unchanged. Nothing may touch `_S.Buffer`/`_S.Used`/`_S.Exposed` outside
-   `Append` and the `ByteBuffer` accessor.
+   `Append`/`AppendLegacy`/`AppendString`, the `ByteBuffer` accessor and
+   `AdoptWriter`/`SetWriterData`.
 4a. **0.3.0 compatibility**: without `Strict`, existing methods must keep 0.3.0
    results, bytes, error classes and messages (`test/compat.test.js`). Flag any new
    default-mode throw, coercion change, changed message, or new enumerable property

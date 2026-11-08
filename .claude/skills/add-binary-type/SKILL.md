@@ -13,17 +13,20 @@ low-32-bit width bug in the 64-bit writers — don't repeat it).
 
 ## How the internals work
 
-- **Reader**: the data lives in `this._S.Data` (a private copy); `this._S.Offset` is
-  the read cursor. `ByteBuffer` is a getter returning `_S.Data.subarray(_S.Offset)`.
-  Never slice or reassign `_S.Data` in a read method.
-  - `Ensure(this, N, 'MethodName')` returns `true` when `N` bytes remain; otherwise
-    it throws a `RangeError` in strict mode or returns `false`.
-  - `ResolveCount(this, p_Count, 'MethodName')` resolves a caller-supplied count:
-    in strict mode it throws a `RangeError` for anything but a non-negative integer;
-    otherwise it reproduces 0.3.0 (`ReadBytes` semantics). Use `IsByteCount` for a
-    brand-new method that has no 0.3.0 behavior to keep.
-  - `Advance(this, N)` moves both `_S.Offset` and the public `Position`.
-  - Return copies with `CopyOut(this._S.Data, start, end)`, never a view of `_S.Data`.
+- **Reader**: the data lives in the private state's `Data` (a private copy) and
+  `Offset` is the read cursor. `ByteBuffer` is a getter returning
+  `Data.subarray(Offset)`. Never slice or reassign `Data` in a read method.
+  - `Ensure(this, N, 'MethodName')` returns the reader's state when `N` bytes remain;
+    otherwise it throws a `RangeError` in strict mode or returns `null`. Use the
+    returned state (`s_State.Data`, `s_State.Offset`) and never re-read `this._S`:
+    for frozen or non-extensible copies the state exists only for this call.
+  - `ResolveCount(s_State, p_Count, 'MethodName', p_Lenient)` (state from
+    `ReaderState(this)`) resolves a caller-supplied count: in strict mode it throws
+    `TypeError` for a non-number and `RangeError` for anything but a non-negative
+    integer that fits; otherwise it reproduces 0.3.0's `ReadBytes`, or with
+    `p_Lenient` (new methods) returns `-1` for counts 0.3.0 would have thrown on.
+  - `Advance(this, s_State, N)` moves both the private offset and the public `Position`.
+  - Return copies with `CopyOut(s_State.Data, start, end)`, never a view of the data.
 - **Writer**: one growable buffer (`_S.Buffer`, `_S.Used`). Fixed-width writes encode
   into the module-level `Scratch` buffer (16 bytes) and end with
   `Append(this, Scratch, N)`; variable-length writes call
@@ -31,7 +34,9 @@ low-32-bit width bug in the 64-bit writers — don't repeat it).
   `ByteBuffer` snapshot/compat semantics. Never touch `_S.Buffer`/`_S.Used`/`_S.Exposed`/
   `Length` directly.
 - **Validation helpers** (module level): `CheckInteger`, `CheckNumber`,
-  `ToBigIntStrict`/`ToBigInt`, `CheckByteArray`, `CheckMaxCharCode`. Validate
+  `ToBigInt(p_Value, 'MethodName', p_Strict)`, `CheckByteArray`, `CheckMaxCharCode`.
+  Error details use `DescribeWithValue`/`ShowValue`, which never throw (Symbols,
+  null-prototype objects). Validate
   **before** appending so a failed write leaves the writer unchanged.
 - **Compatibility rule**: methods that existed in 0.3.0 only validate when
   strict mode is on, so default results stay identical to 0.3.0
@@ -47,32 +52,36 @@ low-32-bit width bug in the 64-bit writers — don't repeat it).
   prefixed `p_`; locals `s_`.
 - Create buffers with `Buffer.alloc(N)` / `Buffer.from(...)`; never `new Buffer(...)`.
 - **The write width MUST equal the read width.** For 64-bit types use the
-  `*Big*64*` methods and convert with `ToBigInt(p_Value, 'MethodName')`.
+  `*Big*64*` methods and convert with `ToBigInt(p_Value, 'MethodName', true)` (new
+  methods) or as shown in the writer template (methods that existed in 0.3.0).
 
 ## Reader and peek templates
 
 ```javascript
 ReadTYPE: function() {
-    if (!Ensure(this, N, 'ReadTYPE')) {
+    var s_State = Ensure(this, N, 'ReadTYPE');
+    if (s_State === null) {
         return 0;
     }
 
-    var s_Val = (this.Endianness == 'little') ? this._S.Data.readTYPELE(this._S.Offset) : this._S.Data.readTYPEBE(this._S.Offset);
-    Advance(this, N);
+    var s_Val = (this.Endianness == 'little') ? s_State.Data.readTYPELE(s_State.Offset) : s_State.Data.readTYPEBE(s_State.Offset);
+    Advance(this, s_State, N);
     return s_Val;
 },
 ```
 
 ```javascript
 PeekTYPE: function() {
-    if (!Ensure(this, N, 'PeekTYPE')) {
+    var s_State = Ensure(this, N, 'PeekTYPE');
+    if (s_State === null) {
         return 0;
     }
-    return (this.Endianness == 'little') ? this._S.Data.readTYPELE(this._S.Offset) : this._S.Data.readTYPEBE(this._S.Offset);
+    return (this.Endianness == 'little') ? s_State.Data.readTYPELE(s_State.Offset) : s_State.Data.readTYPEBE(s_State.Offset);
 },
 ```
 
-Single-byte types have no endianness branch (see `ReadUInt8`/`PeekUInt8`). The
+Single-byte types have no endianness branch and advance with
+`Advance(this, s_State, 1, true)` (see `ReadUInt8`/`PeekUInt8`). The
 zero value is `0`, `0.0` (float types), `false` (boolean), `''` or
 `Buffer.alloc(0)`. Short 64-bit reads return the **number** `0`.
 
@@ -93,7 +102,7 @@ WriteTYPE: function(p_Value) {
 When changing a method that already existed in 0.3.0, wrap the check in
 `if (WriterState(this).Strict) { ... }` instead (never read `this.Strict`: it is a
 public, user-assignable property). For 64-bit values convert first:
-`var s_Big = WriterState(this).Strict ? ToBigIntStrict(p_Value, 'WriteTYPE') : BigInt(p_Value);`.
+`var s_Big = WriterState(this).Strict ? ToBigInt(p_Value, 'WriteTYPE', true) : BigInt(p_Value);`.
 Single-byte types drop the endianness branch (see `WriteUInt8`/`WriteInt8`).
 
 ## Variable-length / non-numeric types

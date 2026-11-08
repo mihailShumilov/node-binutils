@@ -70,7 +70,7 @@ test('Skip advances without returning data, then reads continue', function() {
     assert.equal(r.ReadUInt8(), 7);
 });
 
-test('Skip past the end does nothing; invalid counts behave like ReadBytes', function() {
+test('Skip past the end does nothing; invalid counts are ignored (ReadBytes keeps 0.3.0 throws)', function() {
     [5, Infinity, 0].forEach(function(p_Count) {
         var r = new BinaryReader([1, 2, 3]);
         r.Skip(p_Count);
@@ -79,14 +79,22 @@ test('Skip past the end does nothing; invalid counts behave like ReadBytes', fun
     });
     [-1, NaN, undefined].forEach(function(p_Count) {
         var r = new BinaryReader([1, 2, 3]);
-        assert.throws(function() { r.ReadBytes(p_Count); });
-        assert.throws(function() { r.Skip(p_Count); });
-        assert.throws(function() { r.PeekBytes(p_Count); });
+        assert.throws(function() { r.ReadBytes(p_Count); }, { name: p_Count === undefined ? 'TypeError' : 'RangeError' });
+        r.Skip(p_Count);
+        assert.equal(r.PeekBytes(p_Count).length, 0);
         assert.equal(r.Position, 0);
+        assert.equal(r.ByteBuffer.length, 3);
+    });
+    [null, '1', true, {}].forEach(function(p_Count) {
+        var r = new BinaryReader([1, 2, 3]);
+        r.Skip(p_Count);
+        assert.equal(r.PeekBytes(p_Count).length, 0, String(p_Count));
+        assert.equal(r.Position, 0, String(p_Count));
     });
     var f = new BinaryReader([1, 2, 3]);
     f.Skip(1.5);
     assert.equal(f.Position, 1);
+    assert.deepEqual(Array.from(f.PeekBytes(1.9)), [2], 'fractions round down, as in ReadBytes');
 });
 
 test('ReadRemaining returns a copy of the rest and consumes it', function() {
@@ -514,8 +522,56 @@ test('writer memory stays proportional to the data', function() {
     for (var i = 0; i < 100000; ++i) {
         w.WriteUInt8(i & 0xFF);
     }
-    assert.ok(w._S.Buffer.length <= 2 * 100000 + 64, 'backing buffer at most ~2x the data');
     assert.equal(w.ByteBuffer.length, 100000);
+});
+
+// Counts the allocations the writer makes while p_Fn runs
+function CountAllocations(t, p_Fn) {
+    var s_Counts = { alloc: 0, unsafeSlow: 0 };
+    var s_Alloc = Buffer.alloc;
+    var s_UnsafeSlow = Buffer.allocUnsafeSlow;
+    Buffer.alloc = function() { ++s_Counts.alloc; return s_Alloc.apply(Buffer, arguments); };
+    Buffer.allocUnsafeSlow = function() { ++s_Counts.unsafeSlow; return s_UnsafeSlow.apply(Buffer, arguments); };
+    t.after(function() {
+        Buffer.alloc = s_Alloc;
+        Buffer.allocUnsafeSlow = s_UnsafeSlow;
+    });
+    try {
+        p_Fn();
+    } finally {
+        Buffer.alloc = s_Alloc;
+        Buffer.allocUnsafeSlow = s_UnsafeSlow;
+    }
+    return s_Counts;
+}
+
+test('plain writes grow the working buffer geometrically', function(t) {
+    var w = new BinaryWriter();
+    var s_Counts = CountAllocations(t, function() {
+        for (var i = 0; i < 100000; ++i) {
+            w.WriteUInt8(i & 0xFF);
+        }
+    });
+    assert.ok(s_Counts.alloc <= 12, 'about log2(n) zero-filled growths, got ' + s_Counts.alloc);
+    assert.equal(s_Counts.unsafeSlow, 0, 'no uninitialized growth without reads');
+    assert.equal(w.ByteBuffer.length, 100000);
+});
+
+test('reading ByteBuffer after every write switches to exact-fit growth and copy-free reads', function(t) {
+    var w = new BinaryWriter();
+    for (var i = 0; i < 100; ++i) {
+        w.WriteUInt8(i);
+        void w.ByteBuffer;
+    }
+    var s_Counts = CountAllocations(t, function() {
+        for (var j = 0; j < 50; ++j) {
+            w.WriteUInt8(j);
+            var s_Buf = w.ByteBuffer;
+            assert.equal(s_Buf.buffer.byteLength, s_Buf.length, 'the exactly-full working buffer is handed out');
+        }
+    });
+    assert.equal(s_Counts.unsafeSlow, 50, 'one exact-size allocation per write and none per read');
+    assert.equal(s_Counts.alloc, 0, 'no geometric growth while reading after every write');
 });
 
 test('writer read after every write keeps 0.3.0 snapshot semantics in the exact-fit mode', function() {
@@ -547,7 +603,6 @@ test('writer read after every write keeps 0.3.0 snapshot semantics in the exact-
     for (var k = 0; k < 1000; ++k) {
         w.WriteUInt8(1);
     }
-    assert.ok(w._S.Buffer.length > w.Length, 'spare capacity after leaving the exact-fit mode');
     assert.equal(w.ByteBuffer.length, 1051);
 });
 
@@ -601,9 +656,155 @@ test('writer never exposes uninitialized memory', function(t) {
         w.WriteUInt8(0);
         assert.ok(w.ByteBuffer.every(function(p_Byte) { return p_Byte === 0; }));
     }
-    for (var k = 0; k < 10; ++k) {
-        w.WriteUInt8(0);                  // plain writes: back to geometric growth with slack
-    }
-    assert.ok(w._S.Buffer.length > w.Length, 'has slack to inspect');
-    assert.ok(w._S.Buffer.every(function(p_Byte) { return p_Byte === 0; }), 'working buffer slack is zeroed too');
+    var s_Counts = CountAllocations(t, function() {
+        for (var k = 0; k < 1000; ++k) {
+            w.WriteUInt8(0);              // plain writes: back to geometric growth with zeroed slack
+        }
+    });
+    assert.ok(s_Counts.alloc > 0, 'grew geometrically');
+    assert.ok(s_Counts.unsafeSlow <= 1, 'slack is never left uninitialized (at most the first write fits exactly)');
+    assert.ok(w.ByteBuffer.every(function(p_Byte) { return p_Byte === 0; }));
+});
+
+test('a strict reader or writer passes strict mode on to forks', function() {
+    var r = new BinaryReader([1, 2], 'big', 'ascii', { Strict: true });
+    [Object.create(r), Object.freeze(Object.create(r))].forEach(function(p_Fork) {
+        assert.equal(p_Fork.Strict, true);
+        assert.throws(function() { p_Fork.ReadUInt32(); }, { name: 'RangeError', message: 'ReadUInt32: need 4 bytes, 2 remaining' });
+        assert.throws(function() { p_Fork.ReadBytes('1'); }, TypeError);
+    });
+    var w = new BinaryWriter('big', 'ascii', { Strict: true });
+    [Object.create(w), Object.freeze(Object.create(w))].forEach(function(p_Fork) {
+        assert.throws(function() { p_Fork.WriteUInt8(1.5); }, { name: 'TypeError', message: 'WriteUInt8: expected an integer number, got number (1.5)' });
+    });
+    var d = Object.create(new BinaryReader([1, 2, 3]));
+    assert.equal(d.Strict, false);
+    assert.equal(d.ReadUInt32(), 0, 'a fork of a default reader stays lenient');
+});
+
+test('strict: binary is an alias of latin1 in any letter case', function() {
+    ['binary', 'BINARY', 'Latin1'].forEach(function(p_Encoding) {
+        var w = new BinaryWriter('big', p_Encoding, { Strict: true });
+        w.WriteString('\u00ff');
+        assert.throws(function() { w.WriteString('\u0100'); }, { name: 'RangeError', message: 'WriteString: character at index 0 (U+100) is not representable in latin1' });
+        assert.throws(function() { w.WriteCString('\u0100'); }, RangeError);
+        assert.deepEqual(Array.from(w.ByteBuffer), [0xFF]);
+    });
+    var a = new BinaryWriter('big', 'ASCII', { Strict: true });
+    assert.throws(function() { a.WriteString('\u0080'); }, /not representable in ascii/);
+});
+
+test('varint writers work when borrowed onto a plain object', function() {
+    var o = { ByteBuffer: Buffer.alloc(0), Endianness: 'big', Length: 0 };
+    BinaryWriter.prototype.WriteVarInt32.call(o, -1);
+    BinaryWriter.prototype.WriteVarInt64.call(o, -2);
+    BinaryWriter.prototype.WriteVarUInt32.call(o, 300);
+    assert.equal(o.ByteBuffer.toString('hex'), '0103ac02');
+    assert.equal(o.Length, 4);
+});
+
+test('strict WriteBoolean takes only booleans', function() {
+    var w = new BinaryWriter('big', 'ascii', { Strict: true });
+    w.WriteBoolean(true);
+    w.WriteBoolean(false);
+    assert.throws(function() { w.WriteBoolean(1); }, { name: 'TypeError', message: 'WriteBoolean: expected a boolean, got number (1)' });
+    assert.throws(function() { w.WriteBoolean(Symbol('b')); }, { name: 'TypeError', message: 'WriteBoolean: expected a boolean, got symbol (Symbol(b))' });
+    assert.deepEqual(Array.from(w.ByteBuffer), [1, 0]);
+    var d = new BinaryWriter();
+    d.WriteBoolean('yes');
+    d.WriteBoolean(0);
+    assert.deepEqual(Array.from(d.ByteBuffer), [1, 0], 'default mode writes truthiness');
+});
+
+test('strict: assigning a non-buffer to ByteBuffer throws TypeError and changes nothing', function() {
+    var r = new BinaryReader([1, 2], 'big', 'ascii', { Strict: true });
+    assert.throws(function() { r.ByteBuffer = [3]; }, { name: 'TypeError', message: 'ByteBuffer: expected a Buffer or Uint8Array, got array (3)' });
+    assert.equal(r.ReadUInt16(), 0x0102);
+    r.ByteBuffer = new Uint8Array([4]);
+    assert.equal(r.ReadUInt8(), 4);
+    var w = new BinaryWriter('big', 'ascii', { Strict: true });
+    w.WriteUInt8(1);
+    assert.throws(function() { w.ByteBuffer = null; }, { name: 'TypeError', message: 'ByteBuffer: expected a Buffer or Uint8Array, got null (null)' });
+    assert.deepEqual(Array.from(w.ByteBuffer), [1]);
+    var d = new BinaryReader([1]);
+    d.ByteBuffer = 'x';
+    assert.equal(d.ByteBuffer, 'x', 'default mode stores any value, as in 0.3.0');
+    assert.equal(d.ReadUInt8(), 0);
+});
+
+test('WriteCString appends the text and terminator in one write', function() {
+    var a = new BinaryWriter();
+    var b = new BinaryWriter();
+    [a, b].forEach(function(p_Writer) {
+        p_Writer.WriteUInt8(1);
+        p_Writer.Length = 0;              // hand-edited Length: each write truncates once
+    });
+    a.WriteCString('hi');
+    b.WriteBytes(Buffer.from('hi\u0000', 'latin1'));
+    assert.deepEqual(a.ByteBuffer, b.ByteBuffer);
+    assert.deepEqual(Array.from(a.ByteBuffer), [1, 0x68, 0x69]);
+    assert.equal(a.Length, b.Length);
+});
+
+test('error messages show Symbols and null-prototype objects instead of crashing', function() {
+    var w = new BinaryWriter('big', 'ascii', { Strict: true });
+    assert.throws(function() { w.WriteUInt8(Symbol('x')); }, { name: 'TypeError', message: 'WriteUInt8: expected an integer number, got symbol (Symbol(x))' });
+    assert.throws(function() { w.WriteFloat(Object.create(null)); }, { name: 'TypeError', message: 'WriteFloat: expected a number, got object (object)' });
+    assert.throws(function() { w.WriteInt64(Symbol('y')); }, { name: 'TypeError', message: 'WriteInt64: expected an integer number or BigInt, got symbol (Symbol(y))' });
+    assert.throws(function() { new BinaryWriter().WriteVarUInt32(Symbol('z')); }, { name: 'TypeError', message: 'WriteVarUInt32: expected an integer number, got symbol (Symbol(z))' });
+    assert.throws(function() { new BinaryReader([1], Symbol('e'), 'ascii', { Strict: true }); }, { name: 'TypeError', message: "BinaryReader: invalid endianness (Symbol(e)), expected 'big' or 'little'" });
+    assert.throws(function() { new BinaryWriter('big', Object.create(null), { Strict: true }); }, { name: 'TypeError', message: 'BinaryWriter: unknown encoding (object)' });
+});
+
+test('WriteString produces the same bytes as Buffer.from in every encoding', function() {
+    var s_Texts = ['', 'abc', 'h\u00e9llo \u20ac', '\ud83d\ude00', '\ud800x', 'zz', 'abc', '4142', 'QUJD', 'QUJD=', '\u0100\u00ff'];
+    ['utf8', 'ascii', 'latin1', 'binary', 'utf16le', 'ucs2', 'base64', 'base64url', 'hex', 'UTF-8'].forEach(function(p_Encoding) {
+        [false, true].forEach(function(p_ReadEachTime) {
+            var w = new BinaryWriter('big', p_Encoding);
+            w.WriteBytes(Buffer.alloc(100, 7));   // room for the in-place path
+            var s_Expected = [Buffer.alloc(100, 7)];
+            s_Texts.forEach(function(p_Text) {
+                w.WriteString(p_Text);
+                s_Expected.push(Buffer.from(p_Text, p_Encoding));
+                if (p_ReadEachTime) {
+                    assert.deepEqual(w.ByteBuffer, Buffer.concat(s_Expected), p_Encoding + ' ' + JSON.stringify(p_Text));
+                }
+            });
+            assert.deepEqual(w.ByteBuffer, Buffer.concat(s_Expected), p_Encoding);
+            assert.equal(w.Length, w.ByteBuffer.length, p_Encoding);
+        });
+    });
+    var s_Bad = new BinaryWriter('big', 'bogus');
+    s_Bad.WriteBytes(Buffer.alloc(100));
+    var s_Expected;
+    try { Buffer.from('a', 'bogus'); } catch (e) { s_Expected = e; }
+    assert.throws(function() { s_Bad.WriteString('a'); }, { name: s_Expected.name, message: s_Expected.message });
+    assert.equal(s_Bad.Length, 100);
+});
+
+test('small and large results own an exactly-sized ArrayBuffer', function() {
+    var r = new BinaryReader(Buffer.alloc(300, 1));
+    [r.PeekBytes(3), r.ReadBytes(3), r.ReadBytes(64), r.ReadBytes(65), r.ReadRemaining()].forEach(function(p_Result) {
+        assert.ok(Buffer.isBuffer(p_Result));
+        assert.equal(p_Result.byteOffset, 0);
+        assert.equal(p_Result.buffer.byteLength, p_Result.length);
+    });
+    var w = new BinaryWriter();
+    w.WriteUInt16(1);
+    assert.equal(w.ByteBuffer.buffer.byteLength, 2);
+});
+
+test('WriteBytes writes the low byte of each character for short and long strings', function() {
+    [5, 16, 17, 40].forEach(function(p_Length) {
+        var s_Text = '';
+        var s_Expected = [];
+        for (var i = 0; i < p_Length; ++i) {
+            var s_Code = (i * 37 + 0x41) % 0x200;
+            s_Text += String.fromCharCode(s_Code);
+            s_Expected.push(s_Code & 0xFF);
+        }
+        var w = new BinaryWriter();
+        w.WriteBytes(s_Text);
+        assert.deepEqual(Array.from(w.ByteBuffer), s_Expected, String(p_Length));
+    });
 });

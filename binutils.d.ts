@@ -8,8 +8,10 @@ declare namespace binutils {
     interface BinaryReaderOptions {
         /**
          * When `true`, short reads, invalid counts, a missing C-string terminator and
-         * truncated or overlong varints throw a `RangeError` instead of returning a zero
-         * value, and the constructor validates its arguments. `ReadRemaining` never
+         * truncated or overlong varints throw (a non-number count throws `TypeError`,
+         * everything else `RangeError`) instead of returning a zero value, assigning a
+         * non-buffer to `ByteBuffer` throws `TypeError`, and the constructor validates
+         * its arguments. `ReadRemaining` never
          * throws. Strict mode only adds errors; it never changes a result.
          * Defaults to `false` (0.3 behavior).
          */
@@ -20,8 +22,9 @@ declare namespace binutils {
         /**
          * When `true`, writers throw `TypeError` for non-integers/non-numbers and
          * `RangeError` for out-of-range values, unsafe 64-bit `number`s, non-byte array
-         * elements and characters the encoding cannot represent; the constructor
-         * validates its arguments. Strict mode only adds errors; it never changes a
+         * elements and characters the encoding cannot represent; `WriteBoolean` takes
+         * only booleans and `ByteBuffer` only buffers; the constructor validates its
+         * arguments. Strict mode only adds errors; it never changes a
          * result. Defaults to `false` (0.3 behavior: values are coerced by Node).
          */
         Strict?: boolean;
@@ -33,7 +36,8 @@ declare namespace binutils {
          * `Buffer` and `Uint8Array` inputs are copied. A string input is encoded with
          * `encoding`, or UTF-8 when `encoding` is omitted.
          * Throws if `input` is not a `Buffer`, `Uint8Array`, array or string, or if
-         * `options` asks for strict mode with an unknown key (other values are ignored). With `{ Strict: true }` it also
+         * `options` turns strict mode on and has another key. Any other `options` value
+         * (including `{ strict: true }`) is ignored. With `{ Strict: true }` it also
          * throws on non-byte array elements, non-ASCII strings without `encoding`, and
          * an invalid `endianness`/`encoding`. Can also be called without `new`.
          */
@@ -47,15 +51,16 @@ declare namespace binutils {
         /**
          * The remaining unread bytes: a live view of the reader's private copy. Shrinks
          * as you read. Assigning a `Buffer` replaces the unread data as is (no copy);
-         * `Position` and `Length` are not changed.
+         * `Position` and `Length` are not changed. Strict mode throws `TypeError` when
+         * anything but a `Buffer`/`Uint8Array` is assigned.
          */
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte reads. */
         Endianness: Endianness;
         /** Encoding used by `ReadString`/`ReadCString`. */
         Encoding: BufferEncoding;
-        /** Whether strict mode is on (see `BinaryReaderOptions.Strict`). Not enumerable. */
-        Strict: boolean;
+        /** Whether strict mode is on (see `BinaryReaderOptions.Strict`); a fork made with `Object.create` inherits it. Assigning it never changes the mode. */
+        readonly Strict: boolean;
         /** Length of the original input in bytes. Never changes as you read. */
         Length: number;
         /** Number of bytes consumed so far. Assigning it does not seek. */
@@ -86,16 +91,18 @@ declare namespace binutils {
         /**
          * Copies `count` bytes into a new Buffer. Returns an empty Buffer (without
          * advancing) if fewer than `count` bytes remain. As in 0.3, a fractional `count`
-         * is rounded down and a negative or non-number `count` throws Node's error.
+         * is rounded down and a negative, `NaN` or non-number `count` throws Node's error.
+         * Strict mode throws `TypeError` for a non-number `count` and `RangeError` for an
+         * invalid or too large one.
          */
         ReadBytes(count: number): Buffer;
-        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is 0 or less. */
+        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is 0 or less. Strict mode validates `count` like `ReadBytes`. */
         ReadString(count: number): string;
         /** Reads up to the next `0x00` byte, consumes the terminator, and decodes the bytes before it. Returns an empty string (without advancing) if there is no terminator. */
         ReadCString(): string;
         /** Returns a copy of all remaining bytes and consumes them. Returns an empty Buffer when nothing remains. Never throws. */
         ReadRemaining(): Buffer;
-        /** Advances `count` bytes without returning them. Does nothing if fewer than `count` bytes remain. Accepts the same `count` values as `ReadBytes`. */
+        /** Advances `count` bytes without returning them. A fractional `count` is rounded down; does nothing if fewer than `count` bytes remain or `count` is negative, `NaN` or not a number. Strict mode validates `count` like `ReadBytes`. */
         Skip(count: number): void;
 
         /** Reads an unsigned LEB128 varint (up to 5 bytes). Returns 0 (without advancing) if truncated or overlong. */
@@ -129,14 +136,14 @@ declare namespace binutils {
         PeekDouble(): number;
         /** Like `ReadBoolean`, but does not consume. */
         PeekBoolean(): boolean;
-        /** Like `ReadBytes`, but does not consume. Returns a copy. */
+        /** Like `ReadBytes`, but does not consume, and returns an empty Buffer (instead of throwing) for a negative, `NaN` or non-number `count`. Returns a copy. */
         PeekBytes(count: number): Buffer;
     }
 
     class BinaryWriter {
         /**
          * Accumulates bytes; every write is amortized O(1) (reading `ByteBuffer` after every write costs O(n) per read, as in 0.3).
-         * Throws if `options` asks for strict mode with an unknown key (other values are ignored). With `{ Strict: true }`
+         * Throws if `options` turns strict mode on and has another key; any other `options` value is ignored. With `{ Strict: true }`
          * it also throws on an invalid `endianness`/`encoding`. Can also be called
          * without `new`.
          */
@@ -147,14 +154,15 @@ declare namespace binutils {
          * same object is returned until the next write, and changes made to it before
          * then are kept. Assigning a `Buffer` replaces the contents as is but does not
          * update `Length`; the next write pads or truncates to `Length`, as in 0.3.
+         * Strict mode throws `TypeError` when anything but a `Buffer`/`Uint8Array` is assigned.
          */
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte writes. */
         Endianness: Endianness;
         /** Encoding used by `WriteString` and `WriteCString`. */
         Encoding: BufferEncoding;
-        /** Whether strict mode is on (see `BinaryWriterOptions.Strict`). Not enumerable. */
-        Strict: boolean;
+        /** Whether strict mode is on (see `BinaryWriterOptions.Strict`); a fork made with `Object.create` inherits it. Assigning it never changes the mode. */
+        readonly Strict: boolean;
         /** The number of bytes written so far. */
         Length: number;
 
@@ -178,7 +186,7 @@ declare namespace binutils {
         WriteFloat(value: number): void;
         /** Writes an IEEE-754 double. Strict mode throws `TypeError` on a non-number. */
         WriteDouble(value: number): void;
-        /** Writes `0x01` for a truthy value, `0x00` otherwise. */
+        /** Writes `0x01` for a truthy value, `0x00` otherwise. Strict mode throws `TypeError` for a non-boolean. */
         WriteBoolean(value: unknown): void;
         /**
          * Appends a copy of the bytes. Strings are written one byte per character code
@@ -186,9 +194,9 @@ declare namespace binutils {
          * for characters above U+00FF and array elements outside 0..255.
          */
         WriteBytes(value: Buffer | Uint8Array | ReadonlyArray<number> | string): void;
-        /** Encodes the string using the instance's `Encoding`. Throws on any other input type. Strict mode also throws `RangeError` for characters `ascii`/`latin1` cannot represent. */
+        /** Encodes the string using the instance's `Encoding`. Throws on any other input type. Strict mode also throws `RangeError` for characters `ascii`/`latin1` (`binary`) cannot represent. */
         WriteString(value: string): void;
-        /** Encodes the string using the instance's `Encoding` and appends a `0x00` terminator. Throws `TypeError` on non-strings, and `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or `utf16le` text). */
+        /** Encodes the string using the instance's `Encoding` and appends a `0x00` terminator in a single write. Throws `TypeError` on non-strings, and `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or `utf16le` text). Strict mode checks characters like `WriteString`. */
         WriteCString(value: string): void;
 
         /** Writes an unsigned LEB128 varint. Throws `TypeError` on a non-integer and `RangeError` outside 0..2^32-1. */

@@ -443,8 +443,65 @@ var UnusualCases = {
         var r = new m.BinaryReader([1, 2], 'big', 'ascii', 'x');
         var w = new m.BinaryWriter('big', 'ascii', true);
         var v = new m.BinaryWriter('big', 'ascii', { a: 1 });
-        w.WriteUInt8(1.5); v.WriteUInt8('2');
-        return [r.ReadUInt32(), w.ByteBuffer.toString('hex'), v.ByteBuffer.toString('hex')].join(',');
+        var x = new m.BinaryWriter('big', 'ascii', { strict: true });
+        var y = new m.BinaryReader([1], 'big', 'ascii', { STRICT: true });
+        w.WriteUInt8(1.5); v.WriteUInt8('2'); x.WriteUInt8(2.5);
+        return [r.ReadUInt32(), w.ByteBuffer.toString('hex'), v.ByteBuffer.toString('hex'), x.ByteBuffer.toString('hex'), y.ReadUInt16()].join(',');
+    },
+    'frozen reader re-reads the same bytes': function(m) {
+        var r = new m.BinaryReader([1, 2, 3, 4, 5, 6], 'little'); r.ReadUInt8(); Object.freeze(r);
+        return [r.ReadUInt8(), r.ReadUInt16(), r.ReadInt8(), r.ReadString(2), r.ReadBytes(2).toString('hex'),
+            r.Position, r.ByteBuffer.length, r.Length].join(',');
+    },
+    'frozen reader ignores ByteBuffer assignment': function(m) {
+        var r = new m.BinaryReader([1, 2]); Object.freeze(r);
+        r.ByteBuffer = Buffer.from([9]);
+        return [r.ReadUInt8(), r.ByteBuffer.length].join(',');
+    },
+    'frozen writer ignores writes': function(m) {
+        var w = new m.BinaryWriter('little'); w.WriteUInt8(1); w.WriteString('ab'); Object.freeze(w);
+        w.WriteUInt16(0x0302); w.WriteString('cd'); w.WriteBytes([4, 5]); w.WriteBytes([]); w.WriteString('');
+        return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
+    'frozen writer keeps the same ByteBuffer object': function(m) {
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); var s_Before = w.ByteBuffer; Object.freeze(w);
+        s_Before[0] = 7; w.WriteUInt8(2); w.WriteBytes([]);
+        return [w.ByteBuffer === s_Before, w.ByteBuffer.toString('hex'), w.Length].join(',');
+    },
+    'frozen writer after Length was changed by hand': function(m) {
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); w.Length = 3; Object.freeze(w);
+        w.WriteUInt8(2);
+        return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
+    'frozen writer still throws for bad values': function(m) {
+        var w = new m.BinaryWriter(); Object.freeze(w);
+        w.WriteUInt8(256);
+    },
+    'frozen reader fork re-reads its parent bytes': function(m) {
+        var r = new m.BinaryReader([1, 2, 3]); var c = Object.freeze(Object.create(r));
+        return [c.ReadUInt8(), c.ReadUInt8(), r.ReadUInt8(), c.ReadUInt8(), c.Position, r.Position].join(',');
+    },
+    'frozen writer fork ignores writes': function(m) {
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); var c = Object.freeze(Object.create(w));
+        c.WriteUInt8(2); w.WriteUInt8(3);
+        return Buffer.concat([c.ByteBuffer, Buffer.from([c.Length]), w.ByteBuffer]);
+    },
+    'reader method borrowed onto a frozen plain object': function(m) {
+        var o = Object.freeze({ ByteBuffer: Buffer.from([7, 8, 9]), Endianness: 'big', Position: 0 });
+        var s_Proto = m.BinaryReader.prototype;
+        return [s_Proto.ReadUInt8.call(o), s_Proto.ReadUInt16.call(o), s_Proto.ReadBytes.call(o, 1).toString('hex'), o.Position].join(',');
+    },
+    'writer method borrowed onto a frozen plain object': function(m) {
+        var o = Object.freeze({ ByteBuffer: Buffer.from([1]), Endianness: 'big', Length: 1 });
+        m.BinaryWriter.prototype.WriteUInt16.call(o, 0x0203);
+        return Buffer.concat([o.ByteBuffer, Buffer.from([o.Length])]);
+    },
+    'reading Strict on a fork does not disturb reading': function(m) {
+        var r = new m.BinaryReader([1, 2, 3]); var c = Object.create(r);
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); var d = Object.create(w);
+        void c.Strict; void d.Strict;
+        d.WriteUInt8(2);
+        return [c.ReadUInt8(), c.ReadUInt16(), r.ReadUInt8(), d.ByteBuffer.toString('hex'), w.ByteBuffer.toString('hex')].join(',');
     },
     'util.inspect output': function(m) {
         var util = require('util');
