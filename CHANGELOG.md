@@ -35,8 +35,8 @@ randomized test (`test/compat.test.js`) compares the two versions call by call.
   `WriteBoolean` values. Assigning a non-buffer to `ByteBuffer` throws `TypeError`. Both constructors then also validate `endianness` and
   `encoding`; the reader also validates array and string input. Strict mode only
   adds errors; it never changes a result. An `Object.create` fork of a strict
-  instance is strict too. Any `options` value without a truthy `Strict` (including
-  `{ strict: true }`) is ignored, as 0.3.0 ignored extra constructor arguments.
+  instance is strict too. Only `Strict: true` turns it on; any other `options` value
+  (including `{ strict: true }` and `{ Strict: 1 }`) is ignored, as 0.3.0 ignored extra constructor arguments.
 - `Uint8Array` input for the `BinaryReader` constructor and `WriteBytes` (#7). It is
   copied, like a `Buffer`.
 - LEB128 varints: `ReadVarUInt32`/`WriteVarUInt32`, ZigZag-signed
@@ -53,8 +53,9 @@ randomized test (`test/compat.test.js`) compares the two versions call by call.
 
 - **`BinaryWriter` writes are amortized O(1)** instead of re-copying the whole buffer
   on every write (#9): about 20–60× faster at 20,000 small writes, and the gap grows
-  with size. `WriteString` encodes straight into the writer's buffer. Reading
-  `ByteBuffer` after every write stays about as fast as in 0.3.0.
+  with size. `WriteString` and `WriteBytes(string)` encode straight into the
+  writer's buffer. Reading `ByteBuffer` after every write stays about as fast as in
+  0.3.0.
 - **`BinaryReader` reads no longer re-slice the buffer on every call** (#10). They
   read at an internal offset, which makes fixed-width reads about 1.5–3× faster
   (`ReadUInt8` more than 10×).
@@ -66,8 +67,8 @@ randomized test (`test/compat.test.js`) compares the two versions call by call.
   instances behave as they did in 0.3.0 (reads repeat the same bytes, writes are
   ignored).
 - Constructing an instance costs about 0.1–0.15 µs more than in 0.3.0 (private state
-  is kept out of `Object.keys`). Reads and writes are faster, so a reader that
-  performs a few reads per object breaks even.
+  is kept out of `Object.keys`). Reads and writes are faster, so an object breaks
+  even after about 8 reads or 6–8 writes; with fewer, 0.3.0 was faster.
 
 ### Fixed
 

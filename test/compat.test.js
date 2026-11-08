@@ -9,7 +9,9 @@
 //   - 0.3.0 could leave Position as NaN, a fraction or a string after odd counts;
 //     the new code keeps it an integer equal to the bytes consumed.
 //   - Inputs 0.3.0 rejected (Uint8Array) are now accepted; they are not generated.
-//   - Reading after `reader.ByteBuffer = null` threw in 0.3.0; it is not generated.
+//   - Assigning anything but a Buffer/Uint8Array to a reader's ByteBuffer: 0.3.0 then
+//     threw or returned nonsense (ReadString on a string ByteBuffer returned the whole
+//     string); the new code returns zero values. It is not generated.
 
 var test = require('node:test');
 var assert = require('node:assert/strict');
@@ -258,10 +260,21 @@ function RunWriterScenario(p_Seed) {
         var s_OldResult = Call(s_Op.run.bind(s_Op, s_OldWriter));
         var s_NewResult = Call(s_Op.run.bind(s_Op, s_NewWriter));
         assert.deepEqual(s_NewResult, s_OldResult, s_Message);
-        assert.deepEqual(Call(function() { return WriterState(s_NewWriter); }), Call(function() { return WriterState(s_OldWriter); }), s_Message);
-        if (s_OldSnapshot !== null || s_NewSnapshot !== null) {
-            assert.deepEqual(Normalize(s_NewSnapshot), Normalize(s_OldSnapshot), s_Message + '\n(snapshot)');
+        assert.deepEqual(Normalize(s_NewWriter.Length), Normalize(s_OldWriter.Length), s_Message + '\n(Length)');
+        // Reading ByteBuffer changes how the writer works internally (it hands out a
+        // snapshot), so look at it only now and then: runs of writes that nobody
+        // observes must match 0.3.0 too.
+        if (s_Random() < 0.3) {
+            CompareWriters(s_NewWriter, s_OldWriter, s_NewSnapshot, s_OldSnapshot, s_Message);
         }
+    }
+    CompareWriters(s_NewWriter, s_OldWriter, s_NewSnapshot, s_OldSnapshot, s_Log.join('\n') + '\n(end)');
+}
+
+function CompareWriters(p_New, p_Old, p_NewSnapshot, p_OldSnapshot, p_Message) {
+    assert.deepEqual(Call(function() { return WriterState(p_New); }), Call(function() { return WriterState(p_Old); }), p_Message);
+    if (p_OldSnapshot !== null || p_NewSnapshot !== null) {
+        assert.deepEqual(Normalize(p_NewSnapshot), Normalize(p_OldSnapshot), p_Message + '\n(snapshot)');
     }
 }
 
@@ -483,6 +496,27 @@ var UnusualCases = {
         var w = new m.BinaryWriter(); Object.defineProperty(w, 'Length', { writable: false });
         w.WriteUInt8(7); w.WriteString('abc');
         return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
+    'frozen writer ignores ByteBuffer assignment': function(m) {
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); Object.freeze(w);
+        w.ByteBuffer = Buffer.from([9, 9]); w.WriteUInt8(2);
+        return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
+    'Strict assignment on frozen and non-extensible instances': function(m) {
+        var r = Object.freeze(new m.BinaryReader([1]));
+        var w = Object.preventExtensions(new m.BinaryWriter());
+        r.Strict = true; w.Strict = true;
+        return [Object.keys(r).join('|'), Object.keys(w).join('|'), r.ReadUInt32()].join(',');
+    },
+    'borrowed writer method on an object whose Length accessor writes elsewhere': function(m) {
+        var s_Log = new m.BinaryWriter(); var s_Length = 2;
+        var o = { ByteBuffer: Buffer.alloc(0), Endianness: 'big' };
+        Object.defineProperty(o, 'Length', { enumerable: true,
+            get: function() { return s_Length; },
+            set: function(p_Value) { s_Length = p_Value; s_Log.WriteUInt32(0xAAAAAAAA); } });
+        m.BinaryWriter.prototype.WriteUInt32.call(o, 0x01020304);
+        m.BinaryWriter.prototype.WriteUInt16.call(o, 0x0506);
+        return Buffer.concat([o.ByteBuffer, Buffer.from([o.Length])]);
     },
     'frozen writer still throws for bad values': function(m) {
         var w = new m.BinaryWriter(); Object.freeze(w);

@@ -6,7 +6,7 @@ var s_NodeGlobals = {
     Buffer: 'readonly',
     BigInt: 'readonly',
     Symbol: 'readonly',
-    WeakMap: 'readonly',
+    globalThis: 'readonly',
     Uint8Array: 'readonly',
     console: 'readonly',
     process: 'readonly',

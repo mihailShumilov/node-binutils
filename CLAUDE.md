@@ -77,8 +77,11 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
 
 ## Behavior to preserve
 
-- **Backward compatibility with 0.3.0 is a hard rule.** Customers are unknown, so
-  without `{ Strict: true }` every call that worked in 0.3.0 must return identical
+- **Backward compatibility with 0.3.0 is a hard rule.** The only accepted exceptions
+  are listed in README "Upgrading from 0.3" and the header of `test/compat.test.js`
+  (integer `Position` after odd counts, accepted `Uint8Array`, zero values after a
+  non-buffer `ByteBuffer` assignment, the new `Strict`/`constructor`/`_S` members).
+  Customers are unknown, so without `{ Strict: true }` every call that worked in 0.3.0 must return identical
   values and bytes, throw identical errors (class and message), and keep the same
   enumerable shape (`Object.keys`, `JSON.stringify`, key order). `test/compat.test.js`
   checks this against `test/fixtures/binutils-0.3.0.js` with seeded random call
@@ -117,8 +120,9 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   so a failed write leaves the writer unchanged.
 - `WriteBytes` accepts a `Buffer`, `Uint8Array`, byte `Array`, or latin1 `string`,
   and throws the 0.3.0 `Error("Invalid Buffer object provided.")` on any other input.
-- Constructors work without `new`. An `options` argument without a truthy `Strict`
-  is ignored entirely, including `{ strict: true }` (0.3.0 ignored extra arguments);
+- Constructors work without `new` (also through an ES module namespace). An `options`
+  argument without `Strict: true` (exactly `true`) is ignored entirely, including
+  `{ strict: true }` (0.3.0 ignored extra arguments);
   `{ Strict: true }` with any other key throws. `endianness`/`encoding` are
   validated only in strict mode. `_S` and the prototype `Strict` accessor are
   non-enumerable; assigning `Strict` stores a plain value and never changes the mode.
@@ -127,8 +131,11 @@ node .claude/skills/benchmark/bench.js [lib] [scale]   # read/write throughput
   because its state was public. `ReaderState`/`WriterState` check
   `this._S.Owner === this` and otherwise rebuild private state from the public
   `ByteBuffer` (`AdoptReader`/`AdoptWriter`; a fork inherits `Strict`). Every public
-  method gets the state once (`ReaderState`/`WriterState`/`Ensure`, or inside
-  `Append`) and passes it on; never re-read `this._S` afterwards. Objects that cannot
+  method takes the state from `ReaderState`/`WriterState`/`Ensure` (writers may look
+  it up once for the strict check and again inside `Append`/`AppendString`) and uses
+  that object; never re-read `this._S` afterwards. `Append`/`AppendLegacy` copy the
+  source bytes before any caller-visible property access, because accessors on
+  borrowed or subclassed objects can run code that reuses `Scratch`. Objects that cannot
   take `_S` (frozen or non-extensible copies) get detached state (`Owner: null`) that
   lives only for the call: it is rebuilt from the public `ByteBuffer` every time and
   progress is written back to it, as 0.3.0 did. A frozen instance that owns its state

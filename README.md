@@ -103,9 +103,9 @@ you read.
 | `options`    | `{ Strict?: boolean }`        | `{}`    | `Strict: true` turns on [strict mode](#strict-mode).               |
 
 Throws `Error` if `input` is not a `Buffer`, `Uint8Array`, array or string, and
-`TypeError` if `options` turns strict mode on (`Strict` is truthy) but has another
-key. Any other `options` value is ignored, including an object without a truthy
-`Strict` such as `{ strict: true }`, as 0.3 ignored extra arguments. Calling it
+`TypeError` if `options` turns strict mode on (`Strict: true`; other values such as
+`1` or `'true'` do not) but has another key. Any other `options` value is ignored,
+including `{ strict: true }`, as 0.3 ignored extra arguments. Calling it
 without `new` also works. In strict mode the constructor also rejects array elements that are
 not bytes, non-ASCII string input without an explicit `encoding`, and an invalid
 `endianness` or `encoding`.
@@ -175,8 +175,9 @@ copy.
 
 ### BinaryWriter
 
-A writer accumulates bytes as you write. Each write is amortized O(1); reading
-`ByteBuffer` after every write costs O(n) per read, as in 0.3.
+A writer accumulates bytes as you write. Each write is amortized O(1). If you read
+`ByteBuffer` after every write, each write costs O(n) instead (the read itself is
+cheap), which matches 0.3.
 
 #### `new BinaryWriter([endianness], [encoding], [options])`
 
@@ -413,6 +414,9 @@ The only differences are fixes for calls that misbehaved in 0.3:
 - `Position` is always an integer. In 0.3 some invalid `count` values left it as
   `NaN`, a fraction or a string.
 - A `Uint8Array` is accepted as reader input and by `WriteBytes` (0.3 threw).
+- Reading after assigning anything but a `Buffer`/`Uint8Array` to `reader.ByteBuffer`
+  (for example `null`, a string or an array) returns zero values. 0.3 threw, or for a
+  string or array returned meaningless text from `ReadString`.
 - Reading after `reader.ByteBuffer = null` returns zero values instead of throwing a
   `TypeError`.
 
@@ -424,6 +428,9 @@ A few things can be observed that did not exist in 0.3:
   (in 0.3 both were `Object`).
 - Calling a constructor without `new` returns a new instance; in 0.3 it returned
   `undefined` and set the properties on the global object.
+- In code that runs in strict mode (`'use strict'`, ES modules, classes), assigning
+  `ByteBuffer` or `Strict` on a frozen instance is silently ignored; 0.3 threw a
+  `TypeError` there.
 - Instances have a non-enumerable own `_S` property (visible to
   `Object.getOwnPropertyNames` and `Reflect.ownKeys`), and `ByteBuffer` is an own
   enumerable accessor rather than a data property, so

@@ -7,9 +7,9 @@
 
 var BigZero = BigInt(0);
 var BigOne = BigInt(1);
-var BigSeven = BigInt(7);
 var BigTwentyEight = BigInt(28);
-var BigByteMask = BigInt(0x7F);
+var BigLow28Mask = BigInt(0xFFFFFFF);
+var BigMaxUInt32 = BigInt(0xFFFFFFFF);
 var BigMaxUInt64 = (BigOne << BigInt(64)) - BigOne;
 var BigMinInt64 = -(BigOne << BigInt(63));
 var BigMaxInt64 = (BigOne << BigInt(63)) - BigOne;
@@ -18,16 +18,17 @@ var BigMaxInt64 = (BigOne << BigInt(63)) - BigOne;
 var Scratch = Buffer.alloc(16);
 var EmptyBuffer = Buffer.alloc(0);
 
-// Results up to this size are copied with a typed-array slice, which is cheaper than an
-// unpooled allocation plus copy for small reads; larger ones use CopyOut's allocation.
+// Results up to this size are copied with a typed-array slice: V8 keeps typed arrays of
+// up to 64 bytes (typed_array_max_size_in_heap) on its own heap, which makes the slice
+// about twice as fast as an unpooled allocation plus copy. Above it the slice is slower.
 var SmallCopy = 64;
-// WriteBytes(string): a plain loop beats the latin1 encoder for short strings
-var ShortString = 16;
+// Longest error-message excerpt of a caller's value
+var MaxShownLength = 64;
 
 // Marks the writer's exposed ByteBuffer as stale (null/undefined are valid assigned values)
 var NotExposed = {};
 
-var GlobalObject = (function() { return this; })();
+var GlobalObject = (typeof globalThis !== 'undefined') ? globalThis : (function() { return this; })();
 
 var OptionKeys = { Strict: true };
 
@@ -44,11 +45,13 @@ function DescribeValue(p_Value) {
 // Text for a value inside an error message. Never throws: implicit string conversion
 // fails for Symbols and for objects without a usable toString (Object.create(null)).
 function ShowValue(p_Value) {
+    var s_Text;
     try {
-        return String(p_Value);
+        s_Text = String(p_Value);
     } catch (s_Error) { // eslint-disable-line no-unused-vars
         return DescribeValue(p_Value);
     }
+    return s_Text.length > MaxShownLength ? s_Text.slice(0, MaxShownLength) + '\u2026' : s_Text;
 }
 
 // "<type> (<value>)", the detail shape used by every type error
@@ -57,8 +60,10 @@ function DescribeWithValue(p_Value) {
 }
 
 // True when a constructor was called as a plain function (no `new`), e.g. BinaryReader(buf)
+// (or through an ES module namespace, e.g. `import * as ns from 'binutils64'; ns.BinaryReader(buf)`)
 function IsPlainCall(p_This) {
-    return p_This === undefined || p_This === null || p_This === GlobalObject || p_This === module.exports;
+    return p_This === undefined || p_This === null || p_This === GlobalObject || p_This === module.exports ||
+        Object.prototype.toString.call(p_This) === '[object Module]';
 }
 
 function DefineHidden(p_Object, p_Name, p_Value) {
@@ -66,9 +71,10 @@ function DefineHidden(p_Object, p_Name, p_Value) {
 }
 
 // 0.3.0 ignored extra constructor arguments, so anything that does not ask for strict mode
-// is ignored too. Only an options object with a truthy Strict is checked for unknown keys.
+// is ignored too. Only `Strict: true` asks for it (not 'false', 1 or other truthy values);
+// such an options object is then checked for unknown keys.
 function ReadStrictOption(p_Options, p_Class) {
-    if (p_Options === null || typeof p_Options != 'object' || !p_Options.Strict) {
+    if (p_Options === null || typeof p_Options != 'object' || p_Options.Strict !== true) {
         return false;
     }
     for (var s_Key in p_Options) {
@@ -160,12 +166,9 @@ function CopyOut(p_Source, p_Start, p_End) {
     return s_Copy;
 }
 
-function HideMembers(p_Prototype) {
-    for (var s_Name in p_Prototype) {
-        if (s_Name.charAt(0) === '_' || s_Name === 'constructor') {
-            Object.defineProperty(p_Prototype, s_Name, { enumerable: false });
-        }
-    }
+// The prototypes are object literals; keep `constructor` out of for-in, as built-ins do
+function HideConstructor(p_Prototype) {
+    Object.defineProperty(p_Prototype, 'constructor', { enumerable: false });
 }
 
 // --- BinaryReader -----------------------------------------------------------
@@ -358,10 +361,10 @@ function VarIntFailure(p_State, p_Method, p_Reason) {
     if (p_State.Strict) {
         throw new RangeError(p_Method + ': ' + p_Reason + ' varint');
     }
-    return -1;
+    return null;
 }
 
-// Returns the decoded value, or -1 (non-strict) when truncated or overlong.
+// Returns the decoded value, or null (non-strict) when truncated or overlong.
 function DecodeVarUInt32(p_Self, p_Method) {
     var s_State = ReaderState(p_Self);
     var s_Data = s_State.Data;
@@ -388,7 +391,7 @@ function DecodeVarUInt32(p_Self, p_Method) {
     return VarIntFailure(s_State, p_Method, 'overlong');
 }
 
-// Returns the decoded BigInt, or -1 (non-strict) when truncated or overlong.
+// Returns the decoded BigInt, or null (non-strict) when truncated or overlong.
 function DecodeVarUInt64(p_Self, p_Method) {
     var s_State = ReaderState(p_Self);
     var s_Data = s_State.Data;
@@ -625,12 +628,12 @@ BinaryReader.prototype = {
 
     ReadVarUInt32: function() {
         var s_Val = DecodeVarUInt32(this, 'ReadVarUInt32');
-        return s_Val < 0 ? 0 : s_Val;
+        return s_Val === null ? 0 : s_Val;
     },
 
     ReadVarInt32: function() {
         var s_Val = DecodeVarUInt32(this, 'ReadVarInt32');
-        if (s_Val < 0) {
+        if (s_Val === null) {
             return 0;
         }
         // ZigZag decode
@@ -639,12 +642,12 @@ BinaryReader.prototype = {
 
     ReadVarUInt64: function() {
         var s_Val = DecodeVarUInt64(this, 'ReadVarUInt64');
-        return s_Val === -1 ? 0 : s_Val;
+        return s_Val === null ? 0 : s_Val;
     },
 
     ReadVarInt64: function() {
         var s_Val = DecodeVarUInt64(this, 'ReadVarInt64');
-        if (s_Val === -1) {
+        if (s_Val === null) {
             return 0;
         }
         // ZigZag decode
@@ -751,7 +754,7 @@ BinaryReader.prototype = {
     }
 };
 
-HideMembers(BinaryReader.prototype);
+HideConstructor(BinaryReader.prototype);
 
 // --- BinaryWriter -----------------------------------------------------------
 
@@ -842,9 +845,9 @@ function AdoptWriter(p_Self) {
     var s_Strict = p_Self._S !== undefined && p_Self._S.Strict === true;
     var s_State = { Owner: p_Self, Buffer: EmptyBuffer, Used: NaN, Exposed: NotExposed, ReadStreak: 0, Strict: s_Strict };
     if (!Object.isExtensible(p_Self)) {
-        // See AdoptReader: every write takes the 0.3.0 path on the public properties
+        // See AdoptReader. Used stays NaN, so every write takes the 0.3.0 path on the
+        // public properties and the state's buffer fields are never read.
         s_State.Owner = null;
-        s_State.Exposed = s_Value;
         return s_State;
     }
     DefineHidden(p_Self, '_S', s_State);
@@ -862,8 +865,11 @@ function WriterState(p_Self) {
 // Reproduces 0.3.0's write exactly; used when Length was changed by hand, ByteBuffer was
 // assigned, or the object has no state of its own.
 function AppendLegacy(p_Self, p_State, p_Source, p_Count) {
+    // Take the bytes first: the property accesses below may run caller code (accessors on
+    // a borrowed or subclassed object) that writes elsewhere and reuses Scratch
+    var s_Bytes = CopyOut(p_Source, 0, p_Count);
     p_Self.Length += p_Count;
-    StoreLegacy(p_Self, p_State, p_Source, p_Count);
+    StoreLegacy(p_Self, p_State, s_Bytes, p_Count);
 }
 
 // The second half of AppendLegacy: 0.3.0's concat, capped at whatever Length now holds
@@ -889,19 +895,13 @@ function Append(p_Self, p_Source, p_Count) {
         AppendLegacy(p_Self, s_State, p_Source, p_Count);
         return;
     }
-
-    var s_Needed = s_State.Used + p_Count;
-    p_Self.Length = s_Needed;
-    if (p_Self.Length !== s_Needed) {
-        // Length is read-only (frozen, or made non-writable): 0.3.0 capped its concat at the
-        // unchanged Length, and a frozen 0.3.0 writer could not store the result at all
-        StoreLegacy(p_Self, s_State, p_Source, p_Count);
-        return;
-    }
     if (p_Count === 0 && Object.isFrozen(p_Self)) {
+        // A frozen 0.3.0 writer could not store anything
         return;
     }
 
+    var s_Used = s_State.Used;
+    var s_Needed = s_Used + p_Count;
     var s_Detach = false;
     if (s_State.Exposed === NotExposed) {
         s_State.ReadStreak = 0;
@@ -914,7 +914,7 @@ function Append(p_Self, p_Source, p_Count) {
         } else {
             // The caller may have patched the returned copy; in 0.3.0 those bytes carried
             // into the next write. Pull them in once; that copy is never touched again.
-            s_State.Exposed.copy(s_State.Buffer, 0, 0, s_State.Used);
+            s_State.Exposed.copy(s_State.Buffer, 0, 0, s_Used);
         }
     }
 
@@ -925,10 +925,20 @@ function Append(p_Self, p_Source, p_Count) {
         var s_Grown = s_State.ReadStreak > 1 ?
             Buffer.allocUnsafeSlow(s_Needed) :
             Buffer.alloc(Math.max(s_Needed, s_State.Buffer.length * 2, 64));
-        s_State.Buffer.copy(s_Grown, 0, 0, s_State.Used);
+        s_State.Buffer.copy(s_Grown, 0, 0, s_Used);
         s_State.Buffer = s_Grown;
     }
-    p_Source.copy(s_State.Buffer, s_State.Used, 0, p_Count);
+    // Copy into the room past Used before setting Length, which may run caller code that
+    // reuses Scratch; until Used moves, those bytes are invisible.
+    p_Source.copy(s_State.Buffer, s_Used, 0, p_Count);
+
+    p_Self.Length = s_Needed;
+    if (p_Self.Length !== s_Needed) {
+        // Length is read-only (frozen, or made non-writable): 0.3.0 capped its concat at the
+        // unchanged Length, and a frozen 0.3.0 writer could not store the result at all
+        StoreLegacy(p_Self, s_State, s_State.Buffer.subarray(s_Used, s_Needed), p_Count);
+        return;
+    }
     s_State.Used = s_Needed;
     s_State.Exposed = NotExposed;
 }
@@ -938,9 +948,11 @@ function Append(p_Self, p_Source, p_Count) {
 function AppendString(p_Self, p_Value, p_Encoding) {
     var s_State = WriterState(p_Self);
     if (s_State.Exposed === NotExposed && p_Self.Length === s_State.Used && Buffer.isEncoding(p_Encoding)) {
-        // byteLength is exact or (base64, hex) an upper bound; write reports the real count
-        var s_Max = Buffer.byteLength(p_Value, p_Encoding);
-        if (s_State.Used + s_Max <= s_State.Buffer.length) {
+        // No encoding needs more than 3 bytes per UTF-16 code unit, so with that much room
+        // the text fits without measuring it first; write reports the real count
+        var s_Room = s_State.Buffer.length - s_State.Used;
+        var s_Max = s_Room >= 3 * p_Value.length ? s_Room : Buffer.byteLength(p_Value, p_Encoding);
+        if (s_Max <= s_Room) {
             var s_Needed = s_State.Used + s_State.Buffer.write(p_Value, s_State.Used, s_Max, p_Encoding);
             p_Self.Length = s_Needed;
             if (p_Self.Length !== s_Needed) {
@@ -972,10 +984,10 @@ function CheckEncodable(p_Self, p_Value, p_Method) {
 // Writes the unsigned LEB128 form of a Number in 0..2^32-1 to Scratch; returns its length.
 function EncodeVarUInt32(p_Value) {
     var s_Count = 0;
-    var s_Value = p_Value;
+    var s_Value = p_Value >>> 0;
     while (s_Value >= 0x80) {
-        Scratch[s_Count++] = (s_Value % 0x80) | 0x80;
-        s_Value = Math.floor(s_Value / 0x80);
+        Scratch[s_Count++] = (s_Value & 0x7F) | 0x80;
+        s_Value >>>= 7;
     }
     Scratch[s_Count++] = s_Value;
     return s_Count;
@@ -983,13 +995,23 @@ function EncodeVarUInt32(p_Value) {
 
 // Writes the unsigned LEB128 form of a BigInt in 0..2^64-1 to Scratch; returns its length.
 function EncodeVarUInt64(p_Value) {
-    var s_Count = 0;
-    var s_Value = p_Value;
-    while (s_Value > BigByteMask) {
-        Scratch[s_Count++] = Number(s_Value & BigByteMask) | 0x80;
-        s_Value = s_Value >> BigSeven;
+    if (p_Value <= BigMaxUInt32) {
+        return EncodeVarUInt32(Number(p_Value));
     }
-    Scratch[s_Count++] = Number(s_Value);
+    // Above 2^32: the low 28 bits fill four continued bytes; the high part (at most 36
+    // bits) is an exact Number, encoded with plain arithmetic
+    var s_Low = Number(p_Value & BigLow28Mask);
+    var s_High = Number(p_Value >> BigTwentyEight);
+    Scratch[0] = (s_Low & 0x7F) | 0x80;
+    Scratch[1] = ((s_Low >>> 7) & 0x7F) | 0x80;
+    Scratch[2] = ((s_Low >>> 14) & 0x7F) | 0x80;
+    Scratch[3] = ((s_Low >>> 21) & 0x7F) | 0x80;
+    var s_Count = 4;
+    while (s_High >= 0x80) {
+        Scratch[s_Count++] = (s_High % 0x80) | 0x80;
+        s_High = Math.floor(s_High / 0x80);
+    }
+    Scratch[s_Count++] = s_High;
     return s_Count;
 }
 
@@ -1119,16 +1141,10 @@ BinaryWriter.prototype = {
             if (WriterState(this).Strict) {
                 CheckMaxCharCode(p_Value, 0xFF, 'WriteBytes', 'does not fit in one byte; use WriteString for encoded text');
             }
-            // One byte per character code; like 0.3.0, wider codes keep their low byte
-            // (which is exactly what the latin1 encoder does)
-            if (p_Value.length > ShortString) {
-                s_TempBuffer = Buffer.from(p_Value, 'latin1');
-            } else {
-                s_TempBuffer = Buffer.alloc(p_Value.length);
-                for (var i = 0; i < p_Value.length; ++i) {
-                    s_TempBuffer[i] = p_Value.charCodeAt(i);
-                }
-            }
+            // One byte per character code; like 0.3.0, wider codes keep their low byte,
+            // which is exactly what the latin1 encoder writes
+            AppendString(this, p_Value, 'latin1');
+            return;
         } else if (p_Value instanceof Uint8Array) {
             s_TempBuffer = ToBuffer(p_Value);
         } else if (p_Value instanceof Array) {
@@ -1156,7 +1172,7 @@ BinaryWriter.prototype = {
 
     WriteCString: function(p_Value) {
         if (typeof p_Value != 'string') {
-            throw new TypeError('WriteCString: expected a string, got ' + DescribeValue(p_Value));
+            throw new TypeError('WriteCString: expected a string, got ' + DescribeWithValue(p_Value));
         }
         if (WriterState(this).Strict) {
             CheckEncodable(this, p_Value, 'WriteCString');
@@ -1211,7 +1227,7 @@ BinaryWriter.prototype = {
     }
 };
 
-HideMembers(BinaryWriter.prototype);
+HideConstructor(BinaryWriter.prototype);
 
 // Shared members added after the prototypes, all non-enumerable.
 var StrictProperty = {

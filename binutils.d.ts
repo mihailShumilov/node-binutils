@@ -30,7 +30,7 @@ declare namespace binutils {
         Strict?: boolean;
     }
 
-    class BinaryReader {
+    interface BinaryReaderConstructor {
         /**
          * Keeps a private copy of the input and consumes it from the front as you read.
          * `Buffer` and `Uint8Array` inputs are copied. A string input is encoded with
@@ -41,13 +41,25 @@ declare namespace binutils {
          * throws on non-byte array elements, non-ASCII strings without `encoding`, and
          * an invalid `endianness`/`encoding`. Can also be called without `new`.
          */
-        constructor(
+        new (
             input: Buffer | Uint8Array | ReadonlyArray<number> | string,
             endianness?: Endianness,
             encoding?: BufferEncoding,
             options?: BinaryReaderOptions
-        );
+        ): BinaryReader;
+        /** Same as `new BinaryReader(...)`. */
+        (
+            input: Buffer | Uint8Array | ReadonlyArray<number> | string,
+            endianness?: Endianness,
+            encoding?: BufferEncoding,
+            options?: BinaryReaderOptions
+        ): BinaryReader;
+        readonly prototype: BinaryReader;
+    }
 
+    const BinaryReader: BinaryReaderConstructor;
+
+    interface BinaryReader {
         /**
          * The remaining unread bytes: a live view of the reader's private copy. Shrinks
          * as you read. Assigning a `Buffer` replaces the unread data as is (no copy);
@@ -140,15 +152,22 @@ declare namespace binutils {
         PeekBytes(count: number): Buffer;
     }
 
-    class BinaryWriter {
+    interface BinaryWriterConstructor {
         /**
-         * Accumulates bytes; every write is amortized O(1) (reading `ByteBuffer` after every write costs O(n) per read, as in 0.3).
+         * Accumulates bytes; every write is amortized O(1) (reading `ByteBuffer` after every write makes each write O(n), as in 0.3).
          * Throws if `options` turns strict mode on and has another key; any other `options` value is ignored. With `{ Strict: true }`
          * it also throws on an invalid `endianness`/`encoding`. Can also be called
          * without `new`.
          */
-        constructor(endianness?: Endianness, encoding?: BufferEncoding, options?: BinaryWriterOptions);
+        new (endianness?: Endianness, encoding?: BufferEncoding, options?: BinaryWriterOptions): BinaryWriter;
+        /** Same as `new BinaryWriter(...)`. */
+        (endianness?: Endianness, encoding?: BufferEncoding, options?: BinaryWriterOptions): BinaryWriter;
+        readonly prototype: BinaryWriter;
+    }
 
+    const BinaryWriter: BinaryWriterConstructor;
+
+    interface BinaryWriter {
         /**
          * All bytes written so far, in a Buffer with its own exactly-sized memory. The
          * same object is returned until the next write, and changes made to it before

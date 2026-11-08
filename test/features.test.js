@@ -132,7 +132,7 @@ test('ReadCString without a terminator returns an empty string without advancing
 
 test('WriteCString rejects non-strings and embedded null characters', function() {
     var w = new BinaryWriter();
-    assert.throws(function() { w.WriteCString(5); }, { name: 'TypeError', message: 'WriteCString: expected a string, got number' });
+    assert.throws(function() { w.WriteCString(5); }, { name: 'TypeError', message: 'WriteCString: expected a string, got number (5)' });
     assert.throws(function() { w.WriteCString('a\u0000b'); }, RangeError);
     assert.equal(w.Length, 0);
 });
@@ -430,11 +430,30 @@ test('writer keeps 0.3.0 results when Length or ByteBuffer are changed by hand',
     assert.equal(d.Length, 1, 'Length advanced before the failure, as in 0.3.0');
 });
 
-test('many small writes stay fast (linear accumulation)', function() {
+test('many small writes copy a linear number of bytes (no O(n^2) accumulation)', function(t) {
+    var s_Copied = 0;
+    var s_Copy = Buffer.prototype.copy;
+    var s_Set = Uint8Array.prototype.set;
+    Buffer.prototype.copy = function() {
+        var s_Count = s_Copy.apply(this, arguments);
+        s_Copied += s_Count;
+        return s_Count;
+    };
+    Uint8Array.prototype.set = function(p_Source) {
+        s_Copied += p_Source.length;
+        return s_Set.apply(this, arguments);
+    };
+    t.after(function() {
+        Buffer.prototype.copy = s_Copy;
+        Uint8Array.prototype.set = s_Set;
+    });
     var w = new BinaryWriter();
     for (var i = 0; i < 200000; ++i) {
         w.WriteUInt8(i & 0xFF);
     }
+    Buffer.prototype.copy = s_Copy;
+    Uint8Array.prototype.set = s_Set;
+    assert.ok(s_Copied < 4 * 200000, 'copied ' + s_Copied + ' bytes for 200000 one-byte writes');
     assert.equal(w.Length, 200000);
     assert.equal(w.ByteBuffer.length, 200000);
     assert.equal(w.ByteBuffer[199999], 199999 & 0xFF);
@@ -517,30 +536,25 @@ test('strict ReadCString and varint reads succeed on valid input', function() {
     assert.equal(r.ReadRemaining().length, 0, 'ReadRemaining never throws, even when empty');
 });
 
-test('writer memory stays proportional to the data', function() {
-    var w = new BinaryWriter();
-    for (var i = 0; i < 100000; ++i) {
-        w.WriteUInt8(i & 0xFF);
-    }
-    assert.equal(w.ByteBuffer.length, 100000);
-});
-
 // Counts the allocations the writer makes while p_Fn runs
 function CountAllocations(t, p_Fn) {
-    var s_Counts = { alloc: 0, unsafeSlow: 0 };
+    var s_Counts = { alloc: 0, unsafeSlow: 0, from: 0 };
     var s_Alloc = Buffer.alloc;
     var s_UnsafeSlow = Buffer.allocUnsafeSlow;
-    Buffer.alloc = function() { ++s_Counts.alloc; return s_Alloc.apply(Buffer, arguments); };
-    Buffer.allocUnsafeSlow = function() { ++s_Counts.unsafeSlow; return s_UnsafeSlow.apply(Buffer, arguments); };
-    t.after(function() {
+    var s_From = Buffer.from;
+    function Restore() {
         Buffer.alloc = s_Alloc;
         Buffer.allocUnsafeSlow = s_UnsafeSlow;
-    });
+        Buffer.from = s_From;
+    }
+    Buffer.alloc = function() { ++s_Counts.alloc; return s_Alloc.apply(Buffer, arguments); };
+    Buffer.allocUnsafeSlow = function() { ++s_Counts.unsafeSlow; return s_UnsafeSlow.apply(Buffer, arguments); };
+    Buffer.from = function() { ++s_Counts.from; return s_From.apply(Buffer, arguments); };
+    t.after(Restore);
     try {
         p_Fn();
     } finally {
-        Buffer.alloc = s_Alloc;
-        Buffer.allocUnsafeSlow = s_UnsafeSlow;
+        Restore();
     }
     return s_Counts;
 }
@@ -806,5 +820,96 @@ test('WriteBytes writes the low byte of each character for short and long string
         var w = new BinaryWriter();
         w.WriteBytes(s_Text);
         assert.deepEqual(Array.from(w.ByteBuffer), s_Expected, String(p_Length));
+    });
+});
+
+test('strings are encoded straight into the writer once it has room', function(t) {
+    ['utf8', 'latin1', 'utf16le', 'hex'].forEach(function(p_Encoding) {
+        var w = new BinaryWriter('big', p_Encoding);
+        w.WriteBytes(Buffer.alloc(10));
+        var s_Counts = CountAllocations(t, function() {
+            w.WriteString('abcd');
+            w.WriteBytes('wxyz');
+        });
+        assert.deepEqual(s_Counts, { alloc: 0, unsafeSlow: 0, from: 0 }, p_Encoding);
+        assert.deepEqual(w.ByteBuffer.subarray(10), Buffer.concat([Buffer.from('abcd', p_Encoding), Buffer.from('wxyz', 'latin1')]));
+    });
+});
+
+test('a small result is a typed-array slice, a larger one an unpooled allocation', function(t) {
+    var r = new BinaryReader(Buffer.alloc(200));
+    var s_Small = CountAllocations(t, function() { r.ReadBytes(64); });
+    var s_Large = CountAllocations(t, function() { r.ReadBytes(65); });
+    assert.equal(s_Small.unsafeSlow, 0);
+    assert.equal(s_Large.unsafeSlow, 1);
+});
+
+test('64-bit varints use the shortest encoding', function() {
+    [
+        [0n, '00'], [1n, '01'], [127n, '7f'], [128n, '8001'], [300n, 'ac02'],
+        [(1n << 28n) - 1n, 'ffffff7f'], [1n << 28n, '8080808001'],
+        [(1n << 32n) - 1n, 'ffffffff0f'], [1n << 32n, '8080808010'], [(1n << 35n) + 5n, '858080808001'],
+        [(1n << 64n) - 1n, 'ffffffffffffffffff01']
+    ].forEach(function(p_Case) {
+        var w = new BinaryWriter();
+        w.WriteVarUInt64(p_Case[0]);
+        assert.equal(w.ByteBuffer.toString('hex'), p_Case[1], String(p_Case[0]));
+    });
+    [[0n, '00'], [-1n, '01'], [1n, '02'], [63n, '7e'], [-64n, '7f'], [64n, '8001'],
+        [-(1n << 63n), 'ffffffffffffffffff01'], [(1n << 63n) - 1n, 'feffffffffffffffff01']].forEach(function(p_Case) {
+        var w = new BinaryWriter();
+        w.WriteVarInt64(p_Case[0]);
+        assert.equal(w.ByteBuffer.toString('hex'), p_Case[1], String(p_Case[0]));
+    });
+});
+
+test('only Strict: true turns strict mode on', function() {
+    [{ Strict: 1 }, { Strict: 'false' }, { Strict: 'true', other: 1 }, { Strict: {} }].forEach(function(p_Options) {
+        assert.equal(new BinaryReader([1], 'big', 'ascii', p_Options).Strict, false);
+        assert.equal(new BinaryWriter('big', 'ascii', p_Options).Strict, false);
+        assert.equal(new BinaryReader([1], 'big', 'ascii', p_Options).ReadUInt32(), 0);
+    });
+});
+
+test('constructors called through an ES module namespace object return an instance', function() {
+    var s_Namespace = Object.freeze(Object.create(null, {
+        BinaryReader: { value: BinaryReader }, BinaryWriter: { value: BinaryWriter },
+        [Symbol.toStringTag]: { value: 'Module' }
+    }));
+    var r = s_Namespace.BinaryReader([1, 2]);
+    assert.ok(r instanceof BinaryReader);
+    assert.equal(r.ReadUInt16(), 0x0102);
+    assert.ok(s_Namespace.BinaryWriter() instanceof BinaryWriter);
+});
+
+test('error messages show at most 64 characters of a value', function() {
+    var w = new BinaryWriter('big', 'ascii', { Strict: true });
+    assert.throws(function() { w.WriteUInt8('x'.repeat(100000)); }, function(p_Error) {
+        assert.equal(p_Error.message, 'WriteUInt8: expected an integer number, got string (' + 'x'.repeat(64) + '\u2026)');
+        return true;
+    });
+});
+
+test('a Length accessor that writes elsewhere does not corrupt the bytes', function() {
+    var s_Log = new BinaryWriter();
+    var w = new BinaryWriter();
+    var s_Length = 0;
+    Object.defineProperty(w, 'Length', {
+        get: function() { return s_Length; },
+        set: function(p_Value) { s_Length = p_Value; s_Log.WriteUInt32(0xAAAAAAAA); },
+        configurable: true
+    });
+    w.WriteUInt32(0x01020304);
+    w.WriteUInt16(0x0506);
+    w.WriteUInt8(7);
+    assert.equal(w.ByteBuffer.toString('hex'), '01020304050607');
+});
+
+test('in-place WriteString falls back when multi-byte text does not fit the spare room', function() {
+    ['\u00e9'.repeat(30), '\u20ac'.repeat(20), '\ud83d\ude00'.repeat(14)].forEach(function(p_Text) {
+        var w = new BinaryWriter('big', 'utf8');
+        w.WriteBytes(Buffer.alloc(10));   // 64-byte working buffer, 54 bytes of room
+        w.WriteString(p_Text);
+        assert.deepEqual(w.ByteBuffer, Buffer.concat([Buffer.alloc(10), Buffer.from(p_Text, 'utf8')]), p_Text);
     });
 });
