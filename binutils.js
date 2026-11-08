@@ -863,6 +863,11 @@ function WriterState(p_Self) {
 // assigned, or the object has no state of its own.
 function AppendLegacy(p_Self, p_State, p_Source, p_Count) {
     p_Self.Length += p_Count;
+    StoreLegacy(p_Self, p_State, p_Source, p_Count);
+}
+
+// The second half of AppendLegacy: 0.3.0's concat, capped at whatever Length now holds
+function StoreLegacy(p_Self, p_State, p_Source, p_Count) {
     var s_Result = Buffer.concat([p_Self.ByteBuffer, p_Source.subarray(0, p_Count)], p_Self.Length);
     if (p_State.Owner === null) {
         p_Self.ByteBuffer = s_Result;
@@ -887,8 +892,13 @@ function Append(p_Self, p_Source, p_Count) {
 
     var s_Needed = s_State.Used + p_Count;
     p_Self.Length = s_Needed;
-    if ((p_Self.Length !== s_Needed || p_Count === 0) && Object.isFrozen(p_Self)) {
-        // A frozen 0.3.0 writer could not store anything
+    if (p_Self.Length !== s_Needed) {
+        // Length is read-only (frozen, or made non-writable): 0.3.0 capped its concat at the
+        // unchanged Length, and a frozen 0.3.0 writer could not store the result at all
+        StoreLegacy(p_Self, s_State, p_Source, p_Count);
+        return;
+    }
+    if (p_Count === 0 && Object.isFrozen(p_Self)) {
         return;
     }
 
@@ -933,8 +943,11 @@ function AppendString(p_Self, p_Value, p_Encoding) {
         if (s_State.Used + s_Max <= s_State.Buffer.length) {
             var s_Needed = s_State.Used + s_State.Buffer.write(p_Value, s_State.Used, s_Max, p_Encoding);
             p_Self.Length = s_Needed;
-            if (p_Self.Length !== s_Needed && Object.isFrozen(p_Self)) {
-                // The bytes landed in unused room past Used, so nothing changed
+            if (p_Self.Length !== s_Needed) {
+                // Length is read-only: the bytes landed in unused room past Used, so drop
+                // them and take 0.3.0's path, as Append does
+                var s_Bytes = Buffer.from(p_Value, p_Encoding);
+                StoreLegacy(p_Self, s_State, s_Bytes, s_Bytes.length);
                 return;
             }
             s_State.Used = s_Needed;

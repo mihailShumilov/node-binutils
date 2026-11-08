@@ -473,6 +473,17 @@ var UnusualCases = {
         w.WriteUInt8(2);
         return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
     },
+    'writer with a read-only Length': function(m) {
+        var w = new m.BinaryWriter(); w.WriteUInt8(1); w.WriteBytes(Buffer.alloc(80, 2));
+        Object.defineProperty(w, 'Length', { writable: false });
+        w.WriteUInt8(7); w.WriteString('ab'); w.WriteBytes([3]);
+        return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
+    'fresh writer with a read-only Length': function(m) {
+        var w = new m.BinaryWriter(); Object.defineProperty(w, 'Length', { writable: false });
+        w.WriteUInt8(7); w.WriteString('abc');
+        return Buffer.concat([w.ByteBuffer, Buffer.from([w.Length])]);
+    },
     'frozen writer still throws for bad values': function(m) {
         var w = new m.BinaryWriter(); Object.freeze(w);
         w.WriteUInt8(256);

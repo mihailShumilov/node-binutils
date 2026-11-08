@@ -96,7 +96,7 @@ declare namespace binutils {
          * invalid or too large one.
          */
         ReadBytes(count: number): Buffer;
-        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is 0 or less. Strict mode validates `count` like `ReadBytes`. */
+        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is 0 or less. As in 0.3, a non-number `count` is coerced (`ReadString()` returns everything left without consuming it). Strict mode validates `count` like `ReadBytes`. */
         ReadString(count: number): string;
         /** Reads up to the next `0x00` byte, consumes the terminator, and decodes the bytes before it. Returns an empty string (without advancing) if there is no terminator. */
         ReadCString(): string;

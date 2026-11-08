@@ -148,9 +148,10 @@ is rounded down, and a negative, `NaN` or non-number `count` throws Node's own
 `RangeError`/`TypeError`. `PeekBytes` and `Skip` (new in 0.4) also round a fraction
 down, but treat any other invalid `count` like one that is too large: `PeekBytes`
 returns an empty `Buffer` and `Skip` does nothing. `ReadString` returns an empty
-string for a `count` of `0` or less. In strict mode every invalid `count` throws
-instead: `TypeError` for a non-number, `RangeError` for a negative, fractional or
-infinite one.
+string for a `count` of `0` or less, and, as in 0.3, coerces a non-number `count`
+(`ReadString()` returns everything left without consuming it). In strict mode every
+invalid `count` throws instead: `TypeError` for a non-number, `RangeError` for a
+negative, fractional, infinite or `NaN` one.
 
 #### Peek methods
 
@@ -206,7 +207,7 @@ other `options` value is ignored (see the reader constructor). In strict mode it
 | `WriteBoolean(value)` | 1     | any                 | `0x01` if truthy, `0x00` otherwise. Strict mode accepts only booleans. |
 | `WriteBytes(value)`   | varies| `Buffer` \| `Uint8Array` \| `number[]` \| `string` | Appends a copy. Strings are written one byte per character code (latin1). Throws on any other type. |
 | `WriteString(value)`  | varies| `string`            | Encodes the string using the instance's `Encoding`. Throws on any other type. Lossy encodings (`hex`, `base64`, characters outside `ascii`/`latin1`) write what Node's `Buffer.from` produces. |
-| `WriteCString(value)` | varies| `string`            | Like `WriteString`, plus a `0x00` terminator. Throws a `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or any text in `utf16le`). |
+| `WriteCString(value)` | varies| `string`            | Like `WriteString`, plus a `0x00` terminator. Throws `TypeError` on any other type, and a `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or any text in `utf16le`). |
 | `WriteVarUInt32(value)` | 1–5 | `number`            | Unsigned LEB128, `0`–`0xFFFFFFFF`.                 |
 | `WriteVarInt32(value)`  | 1–5 | `number`            | ZigZag-signed LEB128, `-2^31`–`2^31-1`.            |
 | `WriteVarUInt64(value)` | 1–10| `number` \| `BigInt`| Unsigned LEB128, `0`–`2^64-1`.                     |
@@ -241,7 +242,7 @@ returns without it. It is off by default, so code written for 0.3 is unaffected.
 | Class          | Without `Strict` (0.3 behavior)                                    | With `Strict: true`                                   |
 | -------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
 | Reader         | Short reads, peeks, `Skip`, `ReadCString` without a terminator and truncated or overlong varints return a zero value. | They throw `RangeError` and do not advance. `ReadRemaining` never throws. |
-| Reader         | Odd `count` values are handled as described under [Read methods](#read-methods). Any value can be assigned to `ByteBuffer` (reads then return zero values). | A non-number `count` throws `TypeError`; a negative, fractional or infinite one throws `RangeError`. Assigning anything but a `Buffer`/`Uint8Array` to `ByteBuffer` throws `TypeError`. |
+| Reader         | Odd `count` values are handled as described under [Read methods](#read-methods). Any value can be assigned to `ByteBuffer` (reads then return zero values). | A non-number `count` throws `TypeError`; a negative, fractional, infinite or `NaN` one throws `RangeError`. Assigning anything but a `Buffer`/`Uint8Array` to `ByteBuffer` throws `TypeError`. |
 | Reader constructor | Array elements are truncated to a byte; a string input without `encoding` is UTF-8; any `endianness`/`encoding` is stored (a string input with an unknown `encoding` throws Node's `TypeError`). | Non-byte elements, non-ASCII strings without `encoding`, and invalid `endianness`/`encoding` throw. |
 | Writer         | Values are coerced by Node (`1.5` → `1`, `'5'` → `5`, `NaN` → `0`; the 64-bit writers use `BigInt()` and throw on fractions and `NaN`). A `number` above `2^53 - 1` passed to a 64-bit writer is written as given. | Non-integers throw `TypeError`; the 64-bit writers (`WriteUInt64`, `WriteInt64`, `WriteVarUInt64`, `WriteVarInt64`) throw `RangeError` for a `number` outside `±Number.MAX_SAFE_INTEGER` (pass a `BigInt`). `WriteFloat`/`WriteDouble` throw `TypeError` for non-numbers. |
 | Writer         | `WriteBytes` keeps the low byte of each array element and character code; `WriteString` writes what `Buffer.from` produces; `WriteBoolean` writes the truthiness of any value; any value can be assigned to `ByteBuffer`. | Array elements outside `0`–`255`, `WriteBytes` characters above U+00FF, and `WriteString`/`WriteCString` characters the `ascii`/`latin1` (`binary`) encoding cannot represent throw `RangeError`. `WriteBoolean` throws `TypeError` for a non-boolean, and assigning anything but a `Buffer`/`Uint8Array` to `ByteBuffer` throws `TypeError`. |
@@ -423,6 +424,10 @@ A few things can be observed that did not exist in 0.3:
   (in 0.3 both were `Object`).
 - Calling a constructor without `new` returns a new instance; in 0.3 it returned
   `undefined` and set the properties on the global object.
+- Instances have a non-enumerable own `_S` property (visible to
+  `Object.getOwnPropertyNames` and `Reflect.ownKeys`), and `ByteBuffer` is an own
+  enumerable accessor rather than a data property, so
+  `Object.getOwnPropertyDescriptor(x, 'ByteBuffer')` has `get`/`set` instead of `value`.
 
 New in 0.4: `Peek*`, `Skip`, `ReadRemaining`, `ReadBoolean`/`WriteBoolean`,
 `ReadCString`/`WriteCString`, varints and strict mode. Opt in to strict mode one
