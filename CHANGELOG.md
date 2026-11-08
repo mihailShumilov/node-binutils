@@ -5,6 +5,78 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-11-08
+
+This release is backward compatible with 0.3.0. Without the new `{ Strict: true }`
+option, every call that worked in 0.3.0 returns the same values, writes the same bytes
+and throws the same errors, and instances keep the same enumerable properties. A
+randomized test (`test/compat.test.js`) compares the two versions call by call.
+
+### Added
+
+- `ReadBoolean()` / `WriteBoolean(value)` (#5).
+- `ReadCString()` / `WriteCString(value)` for null-terminated strings (#2).
+  `WriteCString` throws if the encoded string contains a `0x00` byte, so it rejects
+  `utf16le` text; use a byte-oriented encoding such as `utf8` or `latin1`.
+- `Skip(count)` and `ReadRemaining()` on `BinaryReader` (#3). Skipping past the end,
+  or with a negative, `NaN` or non-number `count`, does nothing.
+- Non-consuming `Peek*` methods for every fixed-width type, plus `PeekBoolean()` and
+  `PeekBytes(count)` (#4). `PeekBytes` returns an empty Buffer where `ReadBytes`
+  would throw for an invalid `count`.
+- Opt-in strict mode on both classes (#6):
+  `new BinaryReader(input, endianness, encoding, { Strict: true })` and
+  `new BinaryWriter(endianness, encoding, { Strict: true })`. Strict readers throw a
+  `RangeError` on short reads, invalid counts (`TypeError` for a non-number),
+  missing C-string terminators and truncated or overlong varints. Strict writers
+  reject non-integers, non-numbers, unsafe 64-bit `number`s, out-of-range array
+  elements, characters the encoding cannot represent and non-boolean
+  `WriteBoolean` values. Assigning a non-buffer to `ByteBuffer` throws `TypeError`. Both constructors then also validate `endianness` and
+  `encoding`; the reader also validates array and string input. Strict mode only
+  adds errors; it never changes a result. An `Object.create` fork of a strict
+  instance is strict too. Only `Strict: true` turns it on; any other `options` value
+  (including `{ strict: true }` and `{ Strict: 1 }`) is ignored, as 0.3.0 ignored extra constructor arguments.
+- `Uint8Array` input for the `BinaryReader` constructor and `WriteBytes` (#7). It is
+  copied, like a `Buffer`.
+- LEB128 varints: `ReadVarUInt32`/`WriteVarUInt32`, ZigZag-signed
+  `ReadVarInt32`/`WriteVarInt32`, and 64-bit `BigInt` variants
+  `ReadVarUInt64`/`WriteVarUInt64`/`ReadVarInt64`/`WriteVarInt64` (#8).
+- Read-only-in-effect `Strict` property on both classes (non-enumerable; assigning it
+  stores a value, as in 0.3.0, but never changes the mode). `reader.Strict` is now
+  `false` where 0.3.0 gave `undefined`.
+- Both constructors can be called without `new` (0.3.0 returned `undefined` and set
+  globals), and `instance.constructor` is the class (0.3.0 reported `Object`).
+- `./package.json` in the `exports` map.
+
+### Changed
+
+- **`BinaryWriter` writes are amortized O(1)** instead of re-copying the whole buffer
+  on every write (#9): about 20–60× faster at 20,000 small writes, and the gap grows
+  with size. `WriteString` and `WriteBytes(string)` encode straight into the
+  writer's buffer. Reading `ByteBuffer` after every write stays about as fast as in
+  0.3.0.
+- **`BinaryReader` reads no longer re-slice the buffer on every call** (#10). They
+  read at an internal offset, which makes fixed-width reads about 1.5–3× faster
+  (`ReadUInt8` more than 10×).
+- `ByteBuffer` is now an accessor on both classes. It returns the same bytes, keeps
+  the same identity between writes, and is still listed first by `Object.keys()` and
+  `JSON.stringify()`; `console.log`/`util.inspect` print the same plain object as
+  before. Copies made with `Object.assign` or spread, `Object.create` forks and
+  methods borrowed onto other objects keep working as in 0.3.0, and frozen
+  instances behave as they did in 0.3.0 (reads repeat the same bytes, writes are
+  ignored).
+- Constructing an instance costs about 0.1–0.15 µs more than in 0.3.0 (private state
+  is kept out of `Object.keys`). Reads and writes are faster, so an object breaks
+  even after about 8 reads or 6–8 writes; with fewer, 0.3.0 was faster.
+
+### Fixed
+
+- `ReadBytes` and `ReadString` no longer leave `Position` as a fraction or a
+  string when given a non-integer `count`; it always counts the bytes consumed.
+- Reading after assigning `null` to a reader's `ByteBuffer` returns zero values
+  instead of throwing a `TypeError` from inside the library.
+
 ## [0.3.0] - 2026-07-04
 
 ### Added

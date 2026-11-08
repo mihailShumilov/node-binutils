@@ -1,6 +1,6 @@
 {
     "name": "binutils64",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "author": "Mihail Shumilov <mschumilow@gmail.com>",
     "description": "A .NET-like BinaryReader and BinaryWriter with endianness support.",
     "license": "MIT",
@@ -25,7 +25,8 @@
         ".": {
             "types": "./binutils.d.ts",
             "default": "./binutils.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "files": [
         "binutils.js",
