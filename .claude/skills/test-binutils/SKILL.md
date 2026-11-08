@@ -66,15 +66,26 @@ into a reader, assert the read value equals the written one.
 - **Constructor copies input**: mutate the caller's original buffer after
   constructing and confirm reader output is unaffected.
 - `ReadUInt64`/`ReadInt64` return a `bigint` (`assert.equal(typeof v, 'bigint')`).
-- README reader example: bytes `[1,0,2,0,0,0,3,1,2,3,4,5,6]` yield `1`, `2`, `3`,
-  a 6-byte buffer, then `Position` and `Length` both `13`.
+- README record example: bytes `[1,0,0,0,3,1,2,3,4,5,6]` yield `1`, `3`, a 6-byte
+  buffer, then `Position` and `Length` both `11` (`test/readme-examples.test.js`
+  uses its own 13-byte variant). Every README example has a mirror test there.
+- **Strict mode** (`{ Strict: true }`): short reads/peeks, invalid counts, missing
+  C-string terminators and bad varints throw `RangeError` without advancing.
+- **Peek**: peek-then-read returns the same value; `Position`/`ByteBuffer` unchanged.
+- **Invalid counts** (`-1`, `NaN`, `1.5`, `undefined`, `'2'`) return the empty
+  value without advancing.
 
 ### 3. BinaryWriter behavior
 - Defaults: endianness `'big'`, encoding `'ascii'`.
 - `Length` increments by the correct width per write; emitted bytes match expected
   hex for both endiannesses.
-- `WriteBytes` accepts `string`, `Array`, and `Buffer`, producing identical bytes,
-  and throws on any other input type.
+- `WriteBytes` accepts `string`, `Array`, `Buffer` and `Uint8Array`, producing
+  identical bytes and copying the input; throws on any other input type, on array
+  elements outside 0–255, and on string characters above U+00FF.
+- Writers throw `TypeError` on wrong argument types and `RangeError` out of range,
+  leaving `Length`/`ByteBuffer` unchanged.
+- `test/smoke.js` is a dependency-free check that CI runs on Node 12–18 (no
+  `node:test` there). Keep it free of `node:test` and post-ES2019 syntax.
 - README writer example yields `<Buffer ff ff 00 00 00 00 ff ff ff ff 05 04 03 02 01>`,
   `Length` 15.
 
