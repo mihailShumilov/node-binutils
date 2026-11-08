@@ -38,11 +38,18 @@ git checkout -b <short-kebab-name>   # e.g. add-boolean, reader-peek-methods
 
 Issues #2–#10 were implemented together. New work must stay consistent with:
 
-- `ByteBuffer` is an accessor on both classes; assigning a `Buffer` replaces the
-  data (reader keeps `Position`/`Length`; writer resets `Length`).
-- The reader reads at a private `_Offset`; `Position` is informational only.
-- Strict mode is opt-in (`{ Strict: true }`, 4th reader argument) and covers every
-  read, peek, `Skip`, `ReadCString` and varint read, plus invalid counts.
+- **No breaking changes.** Customers are unknown: without `{ Strict: true }`, every
+  call that worked in 0.3.0 keeps its exact result, bytes, error class and message,
+  and enumerable shape. `test/compat.test.js` enforces this against the vendored
+  0.3.0 source. New checks on existing methods go behind `ReaderState(this).Strict` / `WriterState(this).Strict`.
+- `ByteBuffer` is an own enumerable accessor on both classes. Assigning it does not
+  copy and does not change `Position`/`Length` (0.3.0 behavior on both classes).
+- The reader reads at a private `_S.Offset`; `Position` is informational only.
+- Strict mode is opt-in on both classes (`{ Strict: true }`: 4th reader argument,
+  3rd writer argument). On the reader it covers every read, peek, `Skip`,
+  `ReadCString` and varint read, plus invalid counts — everything except
+  `ReadRemaining`, which never throws. On the writer it adds type/range checks.
+  Strict mode only adds errors; it never changes a successful result.
 - `Skip` past the end does nothing (or throws in strict mode).
 - Varints: `Var(U)Int32` return numbers, `Var(U)Int64` return BigInts; truncated or
   overlong input returns `0` without advancing.

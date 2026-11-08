@@ -31,16 +31,24 @@ report any failures.
 2. **Endianness branches** present and correct for every multi-byte method: the
    `'little'` branch uses the `*LE` variant, the else branch uses `*BE`. Single-byte
    methods (`*UInt8`/`*Int8`) must NOT have an endianness branch.
-3. **Reader is destructive and consistent**: each `ReadX` reads at `this._Offset`
-   (never index 0, never slicing or reassigning `_Data`), guards with
-   `this._Ensure(N, 'ReadX')`, and calls `this._Advance(N)` with exactly `N`.
-   `Peek*` methods must NOT call `_Advance`. `this.Length` must NOT change on reads.
-4. **Writer accounting**: each `WriteX` validates its argument first, then appends
-   exactly `N` bytes via `this._Append(...)` (which grows `Length`). A throwing
-   write must leave `Length` and `ByteBuffer` unchanged.
+3. **Reader is destructive and consistent**: each `ReadX` reads at `this._S.Offset`
+   (never index 0, never slicing or reassigning `_S.Data`), guards with
+   `Ensure(this, N, 'ReadX')`, and calls `Advance(this, N)` with exactly `N`.
+   `Peek*` methods must NOT call `Advance`. `this.Length` must NOT change on reads.
+4. **Writer accounting**: each `WriteX` validates its argument first (strict-gated
+   for methods that existed in 0.3.0), then appends exactly `N` bytes via
+   `Append(this, Scratch, N)` or `Append(this, s_Bytes, s_Bytes.length)` (which
+   grows `Length`). The source must hold at least `N` bytes — `Append` may use
+   memory that is not zero-filled. A throwing write must leave `Length` and
+   `ByteBuffer` unchanged. Nothing may touch `_S.Buffer`/`_S.Used`/`_S.Exposed` outside
+   `Append` and the `ByteBuffer` accessor.
+4a. **0.3.0 compatibility**: without `Strict`, existing methods must keep 0.3.0
+   results, bytes, error classes and messages (`test/compat.test.js`). Flag any new
+   default-mode throw, coercion change, changed message, or new enumerable property
+   as a blocker.
 5. **Out-of-range reads return the zero value** (`0`, `0.0`, `false`, empty
    `Buffer`/string) without advancing, and throw `RangeError` only in strict mode.
-   The method name passed to `_Ensure`/`_CheckCount` must match the method.
+   The method name passed to `Ensure`/`ResolveCount` must match the method.
 6. **Signed/unsigned and BigInt**: signed types use the signed Buffer methods;
    64-bit reads return `bigint` (`readBig*64*`). Watch for sign/precision errors.
 

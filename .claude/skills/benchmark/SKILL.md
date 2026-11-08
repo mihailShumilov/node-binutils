@@ -35,14 +35,19 @@ Use the scratchpad directory for these files, never the repo.
 
 ## Rules for perf changes
 
-- Correctness first: `npm test` and `npm run lint` must pass unchanged. A perf
-  change must not alter any documented behavior in `CLAUDE.md` ("Behavior to
-  preserve"): destructive reads, `Position`/`Length` semantics, non-throwing short
-  reads that do not advance, constructor copy isolation.
-- `ByteBuffer` is an accessor on both classes (writer: cached concat of chunks;
-  reader: `subarray` from the internal offset). Do not reintroduce per-write
-  `Buffer.concat` of the whole buffer or per-read slicing of `_Data` — the
-  `many small writes stay fast` test guards the writer.
+- Correctness first: `npm test` and `npm run lint` must pass unchanged, including
+  `test/compat.test.js` (0.3.0 results, errors, `ByteBuffer` identity and snapshot
+  semantics). A perf change must not alter any rule in `CLAUDE.md` ("Behavior to
+  preserve"). Run a deep compat sweep after touching the writer:
+  `COMPAT_SCENARIOS=100000 node --test test/compat.test.js`.
+- `ByteBuffer` is an accessor on both classes (writer: one growable buffer, exposed
+  as an exact-size copy, or as is when exactly full; reader: a cached `subarray` from
+  the internal offset). Do not reintroduce per-write `Buffer.concat` of the whole
+  buffer or per-read slicing of `_S.Data`. The `WriteUInt32 + ByteBuffer get` row
+  guards the read-after-every-write pattern, which must stay at least as fast as
+  0.3.0; the retained-heap row catches per-write overhead.
+- To compare with 0.3.0, benchmark `test/fixtures/binutils-0.3.0.js` (its writer is
+  O(n²), so keep the scale at 1 or below).
 - Put a before/after table (scale, ops/s) in the PR description. Do not commit
   benchmark output files.
 - Report numbers honestly, including any path that got slower.

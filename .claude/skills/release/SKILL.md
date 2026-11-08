@@ -6,8 +6,10 @@ description: Cut a new binutils64 release — pick the semver bump, move CHANGEL
 # Releasing binutils64
 
 Publishing to npm is automated: `.github/workflows/publish.yml` runs on a
-**published GitHub release**, runs `npm test`, and publishes with provenance via
-npm Trusted Publishing (no token). You never run `npm publish` locally.
+**published GitHub release**. It checks that the release tag matches the
+`package.json` version, runs `npm ci`, `npm run lint` and `npm test`, and publishes
+with provenance via npm Trusted Publishing (no token). You never run `npm publish`
+locally.
 
 Every step that pushes, tags or creates a release is outward-facing: confirm with
 the user before step 5 unless they already said to go ahead.

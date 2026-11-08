@@ -5,6 +5,8 @@ var js = require('@eslint/js');
 var s_NodeGlobals = {
     Buffer: 'readonly',
     BigInt: 'readonly',
+    Symbol: 'readonly',
+    WeakMap: 'readonly',
     Uint8Array: 'readonly',
     console: 'readonly',
     process: 'readonly',

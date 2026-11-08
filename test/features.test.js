@@ -70,13 +70,23 @@ test('Skip advances without returning data, then reads continue', function() {
     assert.equal(r.ReadUInt8(), 7);
 });
 
-test('Skip past the end, or with an invalid count, does nothing', function() {
-    [5, -1, 1.5, NaN, undefined].forEach(function(p_Count) {
+test('Skip past the end does nothing; invalid counts behave like ReadBytes', function() {
+    [5, Infinity, 0].forEach(function(p_Count) {
         var r = new BinaryReader([1, 2, 3]);
         r.Skip(p_Count);
         assert.equal(r.Position, 0, String(p_Count));
         assert.equal(r.ByteBuffer.length, 3, String(p_Count));
     });
+    [-1, NaN, undefined].forEach(function(p_Count) {
+        var r = new BinaryReader([1, 2, 3]);
+        assert.throws(function() { r.ReadBytes(p_Count); });
+        assert.throws(function() { r.Skip(p_Count); });
+        assert.throws(function() { r.PeekBytes(p_Count); });
+        assert.equal(r.Position, 0);
+    });
+    var f = new BinaryReader([1, 2, 3]);
+    f.Skip(1.5);
+    assert.equal(f.Position, 1);
 });
 
 test('ReadRemaining returns a copy of the rest and consumes it', function() {
@@ -114,7 +124,7 @@ test('ReadCString without a terminator returns an empty string without advancing
 
 test('WriteCString rejects non-strings and embedded null characters', function() {
     var w = new BinaryWriter();
-    assert.throws(function() { w.WriteCString(5); }, /Invalid string/);
+    assert.throws(function() { w.WriteCString(5); }, { name: 'TypeError', message: 'WriteCString: expected a string, got number' });
     assert.throws(function() { w.WriteCString('a\u0000b'); }, RangeError);
     assert.equal(w.Length, 0);
 });
@@ -176,7 +186,6 @@ test('short peeks return the zero value', function() {
     assert.equal(r.PeekDouble(), 0);
     assert.equal(new BinaryReader([]).PeekBoolean(), false);
     assert.equal(r.PeekBytes(2).length, 0);
-    assert.equal(r.PeekBytes(-1).length, 0);
     assert.equal(r.Position, 0);
 });
 
@@ -327,7 +336,30 @@ test('reader ByteBuffer is the remaining data and can be replaced', function() {
     assert.equal(r.ReadUInt8(), 9);
     assert.equal(r.Position, 2);
     assert.equal(r.Length, 3);
-    assert.throws(function() { r.ByteBuffer = [1]; }, TypeError);
+});
+
+test('reader ByteBuffer assignment keeps 0.3.0 semantics (no copy, identity, append pattern)', function() {
+    var r = new BinaryReader([1, 2]);
+    assert.equal(r.ByteBuffer, r.ByteBuffer, 'same object until the next read');
+    r.ReadUInt8();
+    var s_Chunk = Buffer.from([3, 4]);
+    r.ByteBuffer = Buffer.concat([r.ByteBuffer, s_Chunk]);     // common streaming pattern
+    assert.deepEqual(r.ByteBuffer, Buffer.from([2, 3, 4]));
+    assert.equal(r.ReadUInt8(), 2);
+    assert.equal(r.Position, 2);
+    assert.equal(r.Length, 2, 'Length is left alone, as in 0.3.0');
+
+    var s_Shared = Buffer.from([5, 6]);
+    r.ByteBuffer = s_Shared;
+    assert.equal(r.ByteBuffer, s_Shared, 'assigned object is returned as-is');
+    s_Shared[0] = 9;
+    assert.equal(r.ReadUInt8(), 9, 'no copy is made, as in 0.3.0');
+
+    r.ByteBuffer = new Uint8Array([7]);
+    assert.equal(r.ReadUInt8(), 7);
+    r.ByteBuffer = null;
+    assert.equal(r.ByteBuffer, null);
+    assert.equal(r.ReadUInt8(), 0);
 });
 
 test('assigning Position does not seek', function() {
@@ -344,19 +376,50 @@ test('writer ByteBuffer reflects every write and can be replaced', function() {
     w.WriteUInt8(2);
     assert.deepEqual(w.ByteBuffer, Buffer.from([1, 2]));
     w.ByteBuffer = Buffer.from([7]);
-    assert.equal(w.Length, 1);
+    w.Length = 1;
     w.WriteUInt8(8);
     assert.deepEqual(w.ByteBuffer, Buffer.from([7, 8]));
     assert.equal(w.Length, 2);
-    assert.throws(function() { w.ByteBuffer = 'x'; }, TypeError);
 });
 
-test('writer ByteBuffer is not padded when Length is changed externally', function() {
+test('writer ByteBuffer snapshots: edits before the next write persist, later writes never alter it', function() {
     var w = new BinaryWriter();
-    w.WriteUInt8(1);
-    w.Length = 5;
-    w.WriteUInt8(2);
-    assert.deepEqual(w.ByteBuffer, Buffer.from([1, 2]));
+    w.WriteUInt32(0);              // length placeholder
+    w.WriteUInt8(0xAA);
+    w.ByteBuffer.writeUInt32BE(1, 0);  // patch the header in place (worked in 0.3.0)
+    var s_Snapshot = w.ByteBuffer;
+    w.WriteUInt8(0xBB);
+    assert.deepEqual(w.ByteBuffer, Buffer.from([0, 0, 0, 1, 0xAA, 0xBB]));
+    assert.deepEqual(s_Snapshot, Buffer.from([0, 0, 0, 1, 0xAA]), 'snapshot unchanged by later writes');
+    assert.equal(w.ByteBuffer.byteOffset, 0);
+    assert.equal(w.ByteBuffer.buffer.byteLength, 6, 'exactly sized backing store');
+});
+
+test('writer keeps 0.3.0 results when Length or ByteBuffer are changed by hand', function() {
+    var a = new BinaryWriter();
+    a.WriteUInt8(1);
+    a.Length = 5;
+    a.WriteUInt8(2);
+    assert.deepEqual(a.ByteBuffer, Buffer.from([1, 2, 0, 0, 0, 0]), 'zero-padded to Length, as in 0.3.0');
+    a.WriteUInt8(3);
+    assert.deepEqual(a.ByteBuffer, Buffer.from([1, 2, 0, 0, 0, 0, 3]));
+
+    var b = new BinaryWriter();
+    b.WriteBytes([1, 2, 3]);
+    b.Length = 1;
+    b.WriteUInt8(9);
+    assert.deepEqual(b.ByteBuffer, Buffer.from([1, 2]), 'truncated to Length, as in 0.3.0');
+
+    var c = new BinaryWriter();
+    c.WriteUInt8(1);
+    c.ByteBuffer = Buffer.alloc(0);      // reset without resetting Length
+    c.WriteUInt8(2);
+    assert.deepEqual(c.ByteBuffer, Buffer.from([2, 0]), 'stale Length pads, as in 0.3.0');
+
+    var d = new BinaryWriter();
+    d.ByteBuffer = null;
+    assert.throws(function() { d.WriteUInt8(1); }, TypeError);
+    assert.equal(d.Length, 1, 'Length advanced before the failure, as in 0.3.0');
 });
 
 test('many small writes stay fast (linear accumulation)', function() {
@@ -367,4 +430,180 @@ test('many small writes stay fast (linear accumulation)', function() {
     assert.equal(w.Length, 200000);
     assert.equal(w.ByteBuffer.length, 200000);
     assert.equal(w.ByteBuffer[199999], 199999 & 0xFF);
+});
+
+// --- Offsets, copies and identity (guards found by mutation testing) ---
+
+test('peeks read at the current offset, in both endiannesses', function() {
+    ['big', 'little'].forEach(function(p_Endian) {
+        s_PeekCases.forEach(function(p_Case) {
+            var w = new BinaryWriter(p_Endian);
+            w.WriteUInt8(0xEE);                 // distinct leading byte to consume first
+            w[p_Case[1]](p_Case[2]);
+            var r = new BinaryReader(w.ByteBuffer, p_Endian);
+            assert.equal(r.ReadUInt8(), 0xEE);
+            assert.equal(r['Peek' + p_Case[0]](), p_Case[2], p_Endian + ' Peek' + p_Case[0] + ' at offset 1');
+            assert.equal(r.Position, 1);
+            assert.equal(r['Read' + p_Case[0]](), p_Case[2]);
+        });
+    });
+    var b = new BinaryReader([0xEE, 1, 2, 3]);
+    b.Skip(1);
+    assert.deepEqual(b.PeekBytes(2), Buffer.from([1, 2]));
+    assert.equal(b.Position, 1);
+});
+
+test('PeekBoolean and ReadBoolean treat every non-zero byte as true', function() {
+    [0x01, 0x02, 0x7F, 0x80, 0xFF].forEach(function(p_Byte) {
+        var r = new BinaryReader([0, p_Byte]);
+        r.Skip(1);
+        assert.equal(r.PeekBoolean(), true, 'peek ' + p_Byte);
+        assert.equal(r.ReadBoolean(), true, 'read ' + p_Byte);
+    });
+    assert.equal(new BinaryReader([0]).PeekBoolean(), false);
+});
+
+test('ReadBytes, PeekBytes and ReadRemaining return independent, exactly-sized copies', function() {
+    ['ReadBytes', 'PeekBytes', 'ReadRemaining'].forEach(function(p_Method) {
+        var r = new BinaryReader([1, 2, 3, 4]);
+        var s_Out = r[p_Method](2);
+        assert.equal(s_Out.byteOffset, 0, p_Method);
+        assert.equal(s_Out.buffer.byteLength, s_Out.length, p_Method + ' owns an exactly-sized ArrayBuffer');
+        s_Out.fill(0x99);
+        r.Position = 0;
+        var s_Fresh = new BinaryReader([1, 2, 3, 4]);
+        s_Fresh[p_Method](2);
+        assert.deepEqual(r.ByteBuffer, s_Fresh.ByteBuffer, p_Method + ': mutating the result does not touch the reader');
+    });
+});
+
+test('reading after a copy is unaffected by mutating the copy', function() {
+    var r = new BinaryReader([1, 2, 3, 4]);
+    var s_First = r.ReadBytes(2);
+    var s_View = r.ByteBuffer;
+    s_First[0] = 0xAA;
+    assert.deepEqual(s_View, Buffer.from([3, 4]));
+    var s_Peek = r.PeekBytes(2);
+    s_Peek[0] = 0xBB;
+    assert.equal(r.ReadUInt8(), 3);
+    var s_Rest = r.ReadRemaining();
+    s_Rest[0] = 0xCC;
+    assert.equal(r.ByteBuffer.length, 0);
+});
+
+test('varint writer range messages name the method', function() {
+    var w = new BinaryWriter();
+    assert.throws(function() { w.WriteVarInt64(1n << 63n); }, /^RangeError: WriteVarInt64: value out of range/);
+    assert.throws(function() { w.WriteVarInt32(2 ** 31); }, /^RangeError: WriteVarInt32: value out of range/);
+});
+
+test('strict ReadCString and varint reads succeed on valid input', function() {
+    var w = new BinaryWriter();
+    w.WriteCString('ok');
+    w.WriteVarUInt32(300);
+    w.WriteVarInt64(-2n);
+    var r = new BinaryReader(w.ByteBuffer, 'big', 'ascii', { Strict: true });
+    assert.equal(r.ReadCString(), 'ok');
+    assert.equal(r.ReadVarUInt32(), 300);
+    assert.equal(r.ReadVarInt64(), -2n);
+    assert.equal(r.ReadRemaining().length, 0, 'ReadRemaining never throws, even when empty');
+});
+
+test('writer memory stays proportional to the data', function() {
+    var w = new BinaryWriter();
+    for (var i = 0; i < 100000; ++i) {
+        w.WriteUInt8(i & 0xFF);
+    }
+    assert.ok(w._S.Buffer.length <= 2 * 100000 + 64, 'backing buffer at most ~2x the data');
+    assert.equal(w.ByteBuffer.length, 100000);
+});
+
+test('writer read after every write keeps 0.3.0 snapshot semantics in the exact-fit mode', function() {
+    var w = new BinaryWriter();
+    var s_Snapshots = [];
+    for (var i = 0; i < 50; ++i) {
+        w.WriteUInt8(i);
+        var s_Buf = w.ByteBuffer;
+        assert.equal(s_Buf.length, i + 1);
+        assert.equal(s_Buf.buffer.byteLength, i + 1, 'own exactly-sized ArrayBuffer');
+        assert.notEqual(s_Buf, s_Snapshots[i - 1], 'a new object after every write');
+        s_Buf[0] = 100 + i;               // patch before the next write: carried forward
+        s_Snapshots.push(s_Buf);
+    }
+    for (var j = 0; j < 50; ++j) {
+        assert.equal(s_Snapshots[j].length, j + 1, 'snapshot length frozen');
+        assert.equal(s_Snapshots[j][0], 100 + j, 'later writes and patches never reach an old snapshot');
+        if (j > 0) {
+            assert.equal(s_Snapshots[j][j], j);
+        }
+    }
+    s_Snapshots[10][1] = 0xEE;            // patching an old snapshot does not reach the writer
+    w.WriteUInt8(0xFF);
+    assert.equal(w.ByteBuffer[0], 149);
+    assert.equal(w.ByteBuffer[1], 1);
+    assert.equal(w.ByteBuffer[50], 0xFF);
+
+    // Switching back to plain writes grows geometrically again
+    for (var k = 0; k < 1000; ++k) {
+        w.WriteUInt8(1);
+    }
+    assert.ok(w._S.Buffer.length > w.Length, 'spare capacity after leaving the exact-fit mode');
+    assert.equal(w.ByteBuffer.length, 1051);
+});
+
+test('writer never writes into a ByteBuffer the caller assigned or holds', function() {
+    var s_Mine = Buffer.from([1, 2, 3]);
+    var w = new BinaryWriter();
+    w.Length = 3;
+    w.ByteBuffer = s_Mine;
+    w.WriteBytes(Buffer.alloc(0));        // empty write still detaches, as in 0.3.0
+    w.ByteBuffer[0] = 0x5A;
+    w.WriteUInt8(4);
+    assert.deepEqual(s_Mine, Buffer.from([1, 2, 3]), 'assigned buffer untouched');
+    assert.deepEqual(w.ByteBuffer, Buffer.from([0x5A, 2, 3, 4]));
+
+    var s_View = new Uint8Array([9, 8]);
+    var v = new BinaryWriter();
+    v.Length = 2;
+    v.ByteBuffer = s_View;
+    assert.equal(v.ByteBuffer, s_View, 'returns what was assigned');
+    v.WriteUInt8(7);
+    assert.deepEqual(Array.from(s_View), [9, 8]);
+    assert.deepEqual(v.ByteBuffer, Buffer.from([9, 8, 7]));
+});
+
+test('every new writer starts with its own empty ByteBuffer, as in 0.3.0', function() {
+    var a = new BinaryWriter();
+    var b = new BinaryWriter();
+    assert.equal(a.ByteBuffer.length, 0);
+    assert.notEqual(a.ByteBuffer, b.ByteBuffer);
+    a.ByteBuffer.Tag = 'a';
+    assert.equal(b.ByteBuffer.Tag, undefined, 'no shared object between writers');
+});
+
+test('writer never exposes uninitialized memory', function(t) {
+    // Make any non-zeroed allocation visible: fill it with a marker before the library uses it
+    var s_Original = Buffer.allocUnsafeSlow;
+    Buffer.allocUnsafeSlow = function(p_Size) {
+        return s_Original(p_Size).fill(0xAA);
+    };
+    t.after(function() {
+        Buffer.allocUnsafeSlow = s_Original;
+    });
+    var w = new BinaryWriter();
+    for (var i = 0; i < 300; ++i) {
+        w.WriteUInt8(0);
+        if (i % 3 === 0) {
+            assert.ok(w.ByteBuffer.every(function(p_Byte) { return p_Byte === 0; }));
+        }
+    }
+    for (var j = 0; j < 300; ++j) {
+        w.WriteUInt8(0);
+        assert.ok(w.ByteBuffer.every(function(p_Byte) { return p_Byte === 0; }));
+    }
+    for (var k = 0; k < 10; ++k) {
+        w.WriteUInt8(0);                  // plain writes: back to geometric growth with slack
+    }
+    assert.ok(w._S.Buffer.length > w.Length, 'has slack to inspect');
+    assert.ok(w._S.Buffer.every(function(p_Byte) { return p_Byte === 0; }), 'working buffer slack is zeroed too');
 });

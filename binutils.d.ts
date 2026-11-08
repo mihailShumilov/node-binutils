@@ -7,20 +7,35 @@ declare namespace binutils {
 
     interface BinaryReaderOptions {
         /**
-         * When `true`, reads that do not have enough bytes (or get an invalid count)
-         * throw a `RangeError` instead of returning a zero value. Defaults to `false`.
+         * When `true`, short reads, invalid counts, a missing C-string terminator and
+         * truncated or overlong varints throw a `RangeError` instead of returning a zero
+         * value, and the constructor validates its arguments. `ReadRemaining` never
+         * throws. Strict mode only adds errors; it never changes a result.
+         * Defaults to `false` (0.3 behavior).
+         */
+        Strict?: boolean;
+    }
+
+    interface BinaryWriterOptions {
+        /**
+         * When `true`, writers throw `TypeError` for non-integers/non-numbers and
+         * `RangeError` for out-of-range values, unsafe 64-bit `number`s, non-byte array
+         * elements and characters the encoding cannot represent; the constructor
+         * validates its arguments. Strict mode only adds errors; it never changes a
+         * result. Defaults to `false` (0.3 behavior: values are coerced by Node).
          */
         Strict?: boolean;
     }
 
     class BinaryReader {
         /**
-         * Wraps a copy of the input data and consumes it from the front as you read.
-         * `Buffer` and `Uint8Array` inputs are copied, so the source is never mutated.
-         * Array elements must be integers from 0 to 255. A string input is encoded with
-         * `encoding` (default `'ascii'`).
-         * Throws if `input` is not a `Buffer`, `Uint8Array`, byte array or string, or if
-         * `endianness`/`encoding` is invalid. Can also be called without `new`.
+         * Keeps a private copy of the input and consumes it from the front as you read.
+         * `Buffer` and `Uint8Array` inputs are copied. A string input is encoded with
+         * `encoding`, or UTF-8 when `encoding` is omitted.
+         * Throws if `input` is not a `Buffer`, `Uint8Array`, array or string, or if
+         * `options` asks for strict mode with an unknown key (other values are ignored). With `{ Strict: true }` it also
+         * throws on non-byte array elements, non-ASCII strings without `encoding`, and
+         * an invalid `endianness`/`encoding`. Can also be called without `new`.
          */
         constructor(
             input: Buffer | Uint8Array | ReadonlyArray<number> | string,
@@ -30,15 +45,16 @@ declare namespace binutils {
         );
 
         /**
-         * The remaining unread bytes (a view, not a copy). Shrinks as you read.
-         * Assigning a `Buffer` replaces the unread data; `Position` and `Length` are not changed.
+         * The remaining unread bytes: a live view of the reader's private copy. Shrinks
+         * as you read. Assigning a `Buffer` replaces the unread data as is (no copy);
+         * `Position` and `Length` are not changed.
          */
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte reads. */
         Endianness: Endianness;
-        /** Encoding used to turn a string input into bytes and to decode `ReadString`/`ReadCString`. */
+        /** Encoding used by `ReadString`/`ReadCString`. */
         Encoding: BufferEncoding;
-        /** Whether short reads throw (see `BinaryReaderOptions.Strict`). */
+        /** Whether strict mode is on (see `BinaryReaderOptions.Strict`). Not enumerable. */
         Strict: boolean;
         /** Length of the original input in bytes. Never changes as you read. */
         Length: number;
@@ -67,15 +83,19 @@ declare namespace binutils {
         ReadDouble(): number;
         /** Reads 1 byte; any non-zero byte is `true`. Returns `false` (without advancing) if no bytes remain. */
         ReadBoolean(): boolean;
-        /** Copies `count` bytes into a new Buffer. Returns an empty Buffer (without advancing) if fewer than `count` bytes remain or `count` is not a non-negative integer. */
+        /**
+         * Copies `count` bytes into a new Buffer. Returns an empty Buffer (without
+         * advancing) if fewer than `count` bytes remain. As in 0.3, a fractional `count`
+         * is rounded down and a negative or non-number `count` throws Node's error.
+         */
         ReadBytes(count: number): Buffer;
-        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is not a non-negative integer. */
+        /** Decodes `count` bytes as a string using the instance's `Encoding`. Returns an empty string (without advancing) if fewer than `count` bytes remain or `count` is 0 or less. */
         ReadString(count: number): string;
         /** Reads up to the next `0x00` byte, consumes the terminator, and decodes the bytes before it. Returns an empty string (without advancing) if there is no terminator. */
         ReadCString(): string;
-        /** Returns a copy of all remaining bytes and consumes them. Returns an empty Buffer when nothing remains. */
+        /** Returns a copy of all remaining bytes and consumes them. Returns an empty Buffer when nothing remains. Never throws. */
         ReadRemaining(): Buffer;
-        /** Advances `count` bytes without returning them. Does nothing if fewer than `count` bytes remain or `count` is invalid. */
+        /** Advances `count` bytes without returning them. Does nothing if fewer than `count` bytes remain. Accepts the same `count` values as `ReadBytes`. */
         Skip(count: number): void;
 
         /** Reads an unsigned LEB128 varint (up to 5 bytes). Returns 0 (without advancing) if truncated or overlong. */
@@ -115,63 +135,69 @@ declare namespace binutils {
 
     class BinaryWriter {
         /**
-         * Accumulates bytes; every write is amortized O(1).
-         * Throws if `endianness`/`encoding` is invalid. Can also be called without `new`.
+         * Accumulates bytes; every write is amortized O(1) (reading `ByteBuffer` after every write costs O(n) per read, as in 0.3).
+         * Throws if `options` asks for strict mode with an unknown key (other values are ignored). With `{ Strict: true }`
+         * it also throws on an invalid `endianness`/`encoding`. Can also be called
+         * without `new`.
          */
-        constructor(endianness?: Endianness, encoding?: BufferEncoding);
+        constructor(endianness?: Endianness, encoding?: BufferEncoding, options?: BinaryWriterOptions);
 
         /**
-         * All bytes written so far. Assigning a `Buffer` replaces the contents and
-         * sets `Length` to its length.
+         * All bytes written so far, in a Buffer with its own exactly-sized memory. The
+         * same object is returned until the next write, and changes made to it before
+         * then are kept. Assigning a `Buffer` replaces the contents as is but does not
+         * update `Length`; the next write pads or truncates to `Length`, as in 0.3.
          */
         ByteBuffer: Buffer;
         /** Byte order used by all multi-byte writes. */
         Endianness: Endianness;
         /** Encoding used by `WriteString` and `WriteCString`. */
         Encoding: BufferEncoding;
+        /** Whether strict mode is on (see `BinaryWriterOptions.Strict`). Not enumerable. */
+        Strict: boolean;
         /** The number of bytes written so far. */
         Length: number;
 
-        /** Throws `TypeError` on a non-integer and `RangeError` outside 0..255. */
+        /** Throws `RangeError` outside 0..255. Strict mode also throws `TypeError` on a non-integer. */
         WriteUInt8(value: number): void;
-        /** Throws `TypeError` on a non-integer and `RangeError` outside 0..65535. */
+        /** Throws `RangeError` outside 0..65535. Strict mode also throws `TypeError` on a non-integer. */
         WriteUInt16(value: number): void;
-        /** Throws `TypeError` on a non-integer and `RangeError` outside 0..2^32-1. */
+        /** Throws `RangeError` outside 0..2^32-1. Strict mode also throws `TypeError` on a non-integer. */
         WriteUInt32(value: number): void;
-        /** Accepts an integer number or BigInt; throws `RangeError` outside 0..2^64-1. */
+        /** Accepts an integer number or BigInt; throws `RangeError` outside 0..2^64-1. Strict mode also rejects a number outside the safe-integer range. */
         WriteUInt64(value: number | bigint): void;
-        /** Throws `TypeError` on a non-integer and `RangeError` outside -128..127. */
+        /** Throws `RangeError` outside -128..127. Strict mode also throws `TypeError` on a non-integer. */
         WriteInt8(value: number): void;
-        /** Throws `TypeError` on a non-integer and `RangeError` outside -32768..32767. */
+        /** Throws `RangeError` outside -32768..32767. Strict mode also throws `TypeError` on a non-integer. */
         WriteInt16(value: number): void;
-        /** Throws `TypeError` on a non-integer and `RangeError` outside -2^31..2^31-1. */
+        /** Throws `RangeError` outside -2^31..2^31-1. Strict mode also throws `TypeError` on a non-integer. */
         WriteInt32(value: number): void;
-        /** Accepts an integer number or BigInt; throws `RangeError` outside -2^63..2^63-1. */
+        /** Accepts an integer number or BigInt; throws `RangeError` outside -2^63..2^63-1. Strict mode also rejects a number outside the safe-integer range. */
         WriteInt64(value: number | bigint): void;
-        /** Throws `TypeError` on a non-number. */
+        /** Writes an IEEE-754 single. Strict mode throws `TypeError` on a non-number. */
         WriteFloat(value: number): void;
-        /** Throws `TypeError` on a non-number. */
+        /** Writes an IEEE-754 double. Strict mode throws `TypeError` on a non-number. */
         WriteDouble(value: number): void;
         /** Writes `0x01` for a truthy value, `0x00` otherwise. */
         WriteBoolean(value: unknown): void;
         /**
          * Appends a copy of the bytes. Strings are written one byte per character code
-         * (latin1) and throw `RangeError` on characters above U+00FF. Array elements must
-         * be integers from 0 to 255. Throws on any other input type.
+         * (latin1). Throws on any other input type. Strict mode also throws `RangeError`
+         * for characters above U+00FF and array elements outside 0..255.
          */
         WriteBytes(value: Buffer | Uint8Array | ReadonlyArray<number> | string): void;
-        /** Encodes the string using the instance's `Encoding`. Throws on any other input type. */
+        /** Encodes the string using the instance's `Encoding`. Throws on any other input type. Strict mode also throws `RangeError` for characters `ascii`/`latin1` cannot represent. */
         WriteString(value: string): void;
-        /** Encodes the string using the instance's `Encoding` and appends a `0x00` terminator. Throws on non-strings, and `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or `utf16le` text). */
+        /** Encodes the string using the instance's `Encoding` and appends a `0x00` terminator. Throws `TypeError` on non-strings, and `RangeError` if the encoded bytes contain `0x00` (e.g. a `\0` character, or `utf16le` text). */
         WriteCString(value: string): void;
 
-        /** Writes an unsigned LEB128 varint. Throws `RangeError` outside 0..2^32-1. */
+        /** Writes an unsigned LEB128 varint. Throws `TypeError` on a non-integer and `RangeError` outside 0..2^32-1. */
         WriteVarUInt32(value: number): void;
-        /** Writes a ZigZag-encoded signed LEB128 varint. Throws `RangeError` outside -2^31..2^31-1. */
+        /** Writes a ZigZag-encoded signed LEB128 varint. Throws `TypeError` on a non-integer and `RangeError` outside -2^31..2^31-1. */
         WriteVarInt32(value: number): void;
-        /** Writes an unsigned LEB128 varint. Throws `RangeError` outside 0..2^64-1. */
+        /** Writes an unsigned LEB128 varint. Throws `TypeError` on a non-integer and `RangeError` outside 0..2^64-1. Strict mode also rejects a number outside the safe-integer range. */
         WriteVarUInt64(value: number | bigint): void;
-        /** Writes a ZigZag-encoded signed LEB128 varint. Throws `RangeError` outside -2^63..2^63-1. */
+        /** Writes a ZigZag-encoded signed LEB128 varint. Throws `TypeError` on a non-integer and `RangeError` outside -2^63..2^63-1. Strict mode also rejects a number outside the safe-integer range. */
         WriteVarInt64(value: number | bigint): void;
     }
 }

@@ -49,6 +49,30 @@ test('README strict mode example', function() {
     var reader = new binutils.BinaryReader([0x00, 0x01], 'big', 'ascii', { Strict: true });
     assert.equal(reader.ReadUInt16(), 1);
     assert.throws(function() { reader.ReadUInt32(); }, { name: 'RangeError', message: 'ReadUInt32: need 4 bytes, 0 remaining' });
+
+    var writer = new binutils.BinaryWriter('big', 'ascii', { Strict: true });
+    assert.throws(function() { writer.WriteUInt8(1.5); }, { name: 'TypeError', message: 'WriteUInt8: expected an integer number, got number (1.5)' });
+});
+
+test('README strict mode table: default mode coerces like 0.3', function() {
+    var writer = new binutils.BinaryWriter();
+    writer.WriteUInt8(1.5);
+    writer.WriteUInt8('5');
+    writer.WriteUInt8(NaN);
+    writer.WriteBytes([256]);
+    writer.WriteBytes('Ł');
+    assert.deepEqual(Array.from(writer.ByteBuffer), [1, 5, 0, 0, 0x41]);
+    assert.throws(function() { writer.WriteUInt8(256); }, RangeError);
+
+    var reader = new binutils.BinaryReader([1, 2, 3]);
+    assert.deepEqual(Array.from(reader.ReadBytes(1.5)), [1], 'fraction rounded down');
+    assert.equal(reader.ReadString(0), '');
+    assert.throws(function() { reader.ReadBytes(-1); }, RangeError);
+    assert.equal(reader.Position, 1);
+
+    assert.deepEqual(Array.from(new binutils.BinaryReader('é').ByteBuffer), [0xC3, 0xA9], 'string input without encoding is UTF-8');
+    var s_Odd = new binutils.BinaryReader([0, 1], 'LITTLE');
+    assert.equal(s_Odd.ReadUInt16(), 1, 'unknown endianness reads big-endian');
 });
 
 test('README tag dispatch with peek example', function() {

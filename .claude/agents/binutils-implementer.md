@@ -21,7 +21,11 @@ report.
 ## Non-negotiables
 
 - ES5 only in `binutils.js`: `var`, prototype methods, `function` expressions,
-  `Object.defineProperty` for accessors. `npm run lint` enforces this.
+  ES5 accessors (an own accessor via `Object.defineProperty`, as for `ByteBuffer`,
+  or an object-literal `get`/`set`). `npm run lint` enforces this.
+- **Backward compatibility with 0.3.0**: without `{ Strict: true }`, existing
+  methods keep identical results, bytes and errors. Put new checks on existing
+  methods behind a strict check (`WriterState(this).Strict` / `ReaderState(this).Strict`); `test/compat.test.js` must pass.
 - `PascalCase` methods/properties, `p_` parameters, `s_` locals,
   `Buffer.alloc`/`Buffer.from` only.
 - Write width == read width; both endianness branches for multi-byte types; none

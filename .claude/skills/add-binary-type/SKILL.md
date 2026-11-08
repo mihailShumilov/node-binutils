@@ -13,20 +13,30 @@ low-32-bit width bug in the 64-bit writers — don't repeat it).
 
 ## How the internals work
 
-- **Reader**: the data lives in `this._Data` (a private copy); `this._Offset` is
-  the read cursor. `ByteBuffer` is a getter returning `_Data.subarray(_Offset)`.
-  Never slice or reassign `_Data` in a read method.
-  - `this._Ensure(N, 'MethodName')` returns `true` when `N` bytes remain; otherwise
+- **Reader**: the data lives in `this._S.Data` (a private copy); `this._S.Offset` is
+  the read cursor. `ByteBuffer` is a getter returning `_S.Data.subarray(_S.Offset)`.
+  Never slice or reassign `_S.Data` in a read method.
+  - `Ensure(this, N, 'MethodName')` returns `true` when `N` bytes remain; otherwise
     it throws a `RangeError` in strict mode or returns `false`.
-  - `this._CheckCount(p_Count, 'MethodName')` validates a caller-supplied count
-    (non-negative integer) with the same strict/non-strict behavior.
-  - `this._Advance(N)` moves both `_Offset` and the public `Position`.
-- **Writer**: bytes are appended as chunks; `ByteBuffer` is a cached getter that
-  concatenates them. Every write ends with `this._Append(s_TempBuffer)`, which also
-  grows `Length`. Never touch `_Chunks`/`_Cache`/`Length` directly.
-- **Validation helpers** (module level): `CheckInteger`, `CheckNumber`, `ToBigInt`,
-  `CheckByteArray`. Validate **before** allocating/appending so a failed write
-  leaves the writer unchanged.
+  - `ResolveCount(this, p_Count, 'MethodName')` resolves a caller-supplied count:
+    in strict mode it throws a `RangeError` for anything but a non-negative integer;
+    otherwise it reproduces 0.3.0 (`ReadBytes` semantics). Use `IsByteCount` for a
+    brand-new method that has no 0.3.0 behavior to keep.
+  - `Advance(this, N)` moves both `_S.Offset` and the public `Position`.
+  - Return copies with `CopyOut(this._S.Data, start, end)`, never a view of `_S.Data`.
+- **Writer**: one growable buffer (`_S.Buffer`, `_S.Used`). Fixed-width writes encode
+  into the module-level `Scratch` buffer (16 bytes) and end with
+  `Append(this, Scratch, N)`; variable-length writes call
+  `Append(this, s_Bytes, s_Bytes.length)`. `Append` grows `Length` and handles
+  `ByteBuffer` snapshot/compat semantics. Never touch `_S.Buffer`/`_S.Used`/`_S.Exposed`/
+  `Length` directly.
+- **Validation helpers** (module level): `CheckInteger`, `CheckNumber`,
+  `ToBigIntStrict`/`ToBigInt`, `CheckByteArray`, `CheckMaxCharCode`. Validate
+  **before** appending so a failed write leaves the writer unchanged.
+- **Compatibility rule**: methods that existed in 0.3.0 only validate when
+  strict mode is on, so default results stay identical to 0.3.0
+  (`test/compat.test.js`). A brand-new method has no 0.3.0 behavior, so it may
+  validate always (as the varint writers do).
 
 ## Hard rules (match existing code)
 
@@ -43,22 +53,22 @@ low-32-bit width bug in the 64-bit writers — don't repeat it).
 
 ```javascript
 ReadTYPE: function() {
-    if (!this._Ensure(N, 'ReadTYPE')) {
+    if (!Ensure(this, N, 'ReadTYPE')) {
         return 0;
     }
 
-    var s_Val = (this.Endianness == 'little') ? this._Data.readTYPELE(this._Offset) : this._Data.readTYPEBE(this._Offset);
-    this._Advance(N);
+    var s_Val = (this.Endianness == 'little') ? this._S.Data.readTYPELE(this._S.Offset) : this._S.Data.readTYPEBE(this._S.Offset);
+    Advance(this, N);
     return s_Val;
 },
 ```
 
 ```javascript
 PeekTYPE: function() {
-    if (!this._Ensure(N, 'PeekTYPE')) {
+    if (!Ensure(this, N, 'PeekTYPE')) {
         return 0;
     }
-    return (this.Endianness == 'little') ? this._Data.readTYPELE(this._Offset) : this._Data.readTYPEBE(this._Offset);
+    return (this.Endianness == 'little') ? this._S.Data.readTYPELE(this._S.Offset) : this._S.Data.readTYPEBE(this._S.Offset);
 },
 ```
 
@@ -70,24 +80,27 @@ zero value is `0`, `0.0` (float types), `false` (boolean), `''` or
 
 ```javascript
 WriteTYPE: function(p_Value) {
-    CheckInteger(p_Value, 'WriteTYPE');          // or CheckNumber / ToBigInt
-    var s_TempBuffer = Buffer.alloc(N);
+    CheckInteger(p_Value, 'WriteTYPE');          // new method: always validate (or CheckNumber)
     if (this.Endianness == 'little') {
-        s_TempBuffer.writeTYPELE(p_Value, 0);
+        Scratch.writeTYPELE(p_Value, 0);
     } else {
-        s_TempBuffer.writeTYPEBE(p_Value, 0);
+        Scratch.writeTYPEBE(p_Value, 0);
     }
-    this._Append(s_TempBuffer);
+    Append(this, Scratch, N);
 },
 ```
 
+When changing a method that already existed in 0.3.0, wrap the check in
+`if (WriterState(this).Strict) { ... }` instead (never read `this.Strict`: it is a
+public, user-assignable property). For 64-bit values convert first:
+`var s_Big = WriterState(this).Strict ? ToBigIntStrict(p_Value, 'WriteTYPE') : BigInt(p_Value);`.
 Single-byte types drop the endianness branch (see `WriteUInt8`/`WriteInt8`).
 
 ## Variable-length / non-numeric types
 
 Model them on `ReadString`/`WriteString`, `ReadCString`/`WriteCString`,
 `ReadBytes`/`WriteBytes` and the varint methods: validate input and throw on the
-wrong type in the writer; in the reader, call `_CheckCount`/`_Ensure` (or throw in
+wrong type in the writer; in the reader, call `ResolveCount`/`Ensure` (or throw in
 strict mode yourself) and return the empty value without advancing when the data
 is short or malformed; decode with `this.Encoding` where text is involved. Varints
 and byte runs have no endianness branch.
@@ -120,3 +133,4 @@ their siblings, not at the end.
 - Short read returns the documented zero value (or throws `RangeError` in strict
   mode) without advancing.
 - README, typings and changelog updated; methods placed beside their family.
+- `npm test` passes, including `test/compat.test.js` (0.3.0 behavior unchanged).
